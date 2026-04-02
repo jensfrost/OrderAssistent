@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "2a0f8812-9682-4b3e-a463-15ee0a3e6f3d"
+      }
+    },
+    "android": {
+      "package": "com.jensfrost.hundapoteket"
+    }
+  }
+}
