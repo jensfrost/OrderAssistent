@@ -1,20 +1,30 @@
 // screens/InstallAppScreen.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, TouchableOpacity, Linking } from 'react-native';
+import {
+    View,
+    Text,
+    ScrollView,
+    StyleSheet,
+    Platform,
+    TouchableOpacity,
+    Linking,
+} from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import Constants from 'expo-constants';
 import { useI18n } from '../hooks/useI18n';
 import { useI18nTitle } from '../hooks/useI18nTitle';
 import { useNavigation } from '@react-navigation/native';
 
+type AppEnv = 'dev' | 'preview' | 'prod';
+
 type Manifest = {
-    versionName: string;
-    versionCode: number;
-    apkUrl: string;          // relativ (/downloads/xxx.apk) eller absolut (https://...)
+    versionName?: string;
+    versionCode?: number;
+    apkUrl?: string;
     notes?: string;
     playUrl?: string;
     expoProjectUrl?: string;
-    env?: 'dev' | 'preview' | 'prod';
+    env?: AppEnv;
     file?: string;
     sha256?: string;
     date?: string;
@@ -24,34 +34,14 @@ function isAndroidUAWeb() {
     if (Platform.OS !== 'web') return false;
     return /Android/i.test(navigator.userAgent);
 }
+
 function isIOSUAWeb() {
     if (Platform.OS !== 'web') return false;
     return /iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
-// Basen för web-sökvägar (hanterar subpath och <base href>)
-function webBasePath(): string {
-    try {
-        if (typeof document !== 'undefined') {
-            const baseEl = document.querySelector('base[href]') as HTMLBaseElement | null;
-            if (baseEl?.href) return new URL('.', baseEl.href).pathname;
-        }
-        if (typeof window !== 'undefined') {
-            const p = window.location.pathname;
-            return p.endsWith('/') ? p : p.replace(/\/[^/]*$/, '/');
-        }
-    } catch { }
-    return '/';
-}
-
-// Default manifest-sökväg per miljö (web)
-function defaultWebManifestPath(env: 'dev' | 'preview' | 'prod') {
-    const base = webBasePath();
-    const folder = env === 'dev' ? 'dev' : 'preview'; // 'prod' delar preview-kanalen
-    return `${base}downloads/${folder}/android.json`;
-}
-
 function absolutizeUrl(url: string) {
+    if (!url) return '';
     if (/^https?:\/\//i.test(url)) return url;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
         return new URL(url, window.location.origin).toString();
@@ -59,33 +49,49 @@ function absolutizeUrl(url: string) {
     return url;
 }
 
-// Miljöupplösning
-function resolveEnv(extra: any): 'dev' | 'preview' | 'prod' {
-    const raw =
-        String(extra?.EXPO_PUBLIC_ENV ?? extra?.ENV ?? '')
-            .trim()
-            .toLowerCase();
+function resolveEnv(extra: any): AppEnv {
+    const raw = String(
+        extra?.EXPO_PUBLIC_ENV ??
+        extra?.ENV ??
+        process.env.EXPO_PUBLIC_ENV ??
+        'dev'
+    ).trim().toLowerCase();
 
     if (raw === 'preview') return 'preview';
     if (raw === 'prod' || raw === 'production') return 'prod';
     return 'dev';
 }
 
-// Plocka env-specifik variabel från env/extra
-function getEnvSpecificManifestUrl(extra: any, env: string): string | undefined {
-    const key = `EXPO_PUBLIC_ANDROID_MANIFEST_URL_${env.toUpperCase()}`;
-    // @ts-expect-error indexerad access
-    return (process.env[key] as string | undefined) || (extra?.[key] as string | undefined);
+function getInstallConfig(env: AppEnv) {
+    if (env === 'preview') {
+        return {
+            manifestUrl: 'http://10.10.0.13:3002/api/install/android/manifest?env=preview',
+            apkUrl: 'http://10.10.0.13:3002/api/install/android/apk?env=preview',
+            playUrl: '',
+        };
+    }
+
+    if (env === 'prod') {
+        return {
+            manifestUrl: '',
+            apkUrl: '',
+            playUrl: '',
+        };
+    }
+
+    return {
+        manifestUrl: 'http://10.10.0.13:3003/api/install/android/manifest?env=dev',
+        apkUrl: 'http://10.10.0.13:3003/api/install/android/apk?env=dev',
+        playUrl: '',
+    };
 }
 
-// Lägg på cache-buster EN gång per sidladdning
 function withCacheBusterOnce(u: string, nonce: number) {
     if (!u) return u;
     const sep = u.includes('?') ? '&' : '?';
     return `${u}${sep}t=${nonce}`;
 }
 
-// För webben: tvinga nedladdning som .apk
 function forceDownloadWeb(url: string, filename?: string) {
     try {
         const a = document.createElement('a');
@@ -100,10 +106,13 @@ function forceDownloadWeb(url: string, filename?: string) {
     }
 }
 
-// Extrahera filnamnet
 function basename(u: string) {
     try {
-        const abs = /^https?:\/\//i.test(u) ? u : (typeof window !== 'undefined' ? new URL(u, window.location.origin).toString() : u);
+        const abs = /^https?:\/\//i.test(u)
+            ? u
+            : typeof window !== 'undefined'
+                ? new URL(u, window.location.origin).toString()
+                : u;
         const p = new URL(abs).pathname;
         return p.split('/').filter(Boolean).pop() || 'app.apk';
     } catch {
@@ -118,167 +127,177 @@ export default function InstallAppScreen() {
     useI18nTitle(navigation, 'installApp.title');
 
     const [m, setM] = useState<Manifest | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [warning, setWarning] = useState<string | null>(null);
     const [debugUrl, setDebugUrl] = useState<string>('');
-
-    // Stabil nonce för cache-buster (ändras inte över renders)
     const [nonce] = useState<number>(() => Date.now());
 
     const extra: any =
         (Constants as any)?.expoConfig?.extra ??
+        (Constants as any)?.manifest2?.extra ??
         (Constants as any)?.manifest?.extra ??
         {};
 
     const env = resolveEnv(extra);
+    const installConfig = getInstallConfig(env);
 
-    // 1) Bas-URL (utan cache-buster)
     const baseManifestUrl = useMemo(() => {
-        return (
-            getEnvSpecificManifestUrl(extra, env) ||
-            process.env.EXPO_PUBLIC_ANDROID_MANIFEST_URL ||
-            extra.EXPO_PUBLIC_ANDROID_MANIFEST_URL ||
-            (Platform.OS === 'web' ? defaultWebManifestPath(env) : '')
-        )?.toString().trim();
-    }, [extra, env]);
+        return installConfig.manifestUrl?.trim() || '';
+    }, [installConfig]);
 
-    // 2) Cache-bustad URL som är stabil pga "nonce"
     const manifestUrl = useMemo(() => {
         if (!baseManifestUrl) return '';
         return withCacheBusterOnce(baseManifestUrl, nonce);
     }, [baseManifestUrl, nonce]);
+
+    const fallbackApkUrl = useMemo(() => {
+        return installConfig.apkUrl?.trim() || '';
+    }, [installConfig]);
+
+    const fallbackPlayUrl = useMemo(() => {
+        return installConfig.playUrl?.trim() || '';
+    }, [installConfig]);
 
     const onAndroid = Platform.OS === 'android' || isAndroidUAWeb();
     const oniOS = Platform.OS === 'ios' || isIOSUAWeb();
 
     useEffect(() => {
         let cancelled = false;
+
         (async () => {
             if (!manifestUrl) {
-                const msg = Platform.OS === 'web'
-                    ? `No manifest URL configured for env="${env}". Serve ${defaultWebManifestPath(env)} or set EXPO_PUBLIC_ANDROID_MANIFEST_URL_${env.toUpperCase()}.`
-                    : `No manifest URL configured for env="${env}". Set EXPO_PUBLIC_ANDROID_MANIFEST_URL_${env.toUpperCase()} (or EXPO_PUBLIC_ANDROID_MANIFEST_URL) to an absolute https:// URL.`;
-                setError(msg);
-                setDebugUrl('(empty)');
-                return;
-            }
-            if (Platform.OS !== 'web' && !/^https?:\/\//i.test(baseManifestUrl || '')) {
-                setError('On native, the manifest URL must be absolute (https://...).');
-                setDebugUrl(manifestUrl);
+                if (!cancelled) {
+                    setWarning(`No manifest URL configured for env="${env}".`);
+                    setDebugUrl('(empty)');
+                    setM(null);
+                }
                 return;
             }
 
             setDebugUrl(manifestUrl);
+
             try {
                 const res = await fetch(manifestUrl, { cache: 'no-store' });
                 const ct = (res.headers.get('content-type') || '').toLowerCase();
-                if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+                }
 
                 if (!ct.includes('application/json')) {
                     const sample = await res.text();
-                    throw new Error(`Expected JSON but got "${ct || 'unknown'}". First bytes: ${sample.slice(0, 80)}`);
+                    if (/<!DOCTYPE html>|<html/i.test(sample)) {
+                        throw new Error('Manifest URL returned HTML instead of JSON.');
+                    }
+                    throw new Error(`Expected JSON but got "${ct || 'unknown'}".`);
                 }
 
                 const data = (await res.json()) as Manifest;
 
-                // Valfri säkerhet
                 if (data?.env && data.env !== env && env !== 'prod') {
                     throw new Error(`Manifest env "${data.env}" does not match current env "${env}".`);
                 }
 
-                if (!cancelled) setM(data);
+                if (!cancelled) {
+                    setM(data);
+                    setWarning(null);
+                }
             } catch (e: any) {
-                if (!cancelled) setError(String(e?.message || e));
+                if (!cancelled) {
+                    setM(null);
+                    setWarning(String(e?.message || e));
+                }
             }
         })();
-        return () => { cancelled = true; };
-    }, [manifestUrl, baseManifestUrl, env]);
 
-    const Heading = () => <Text style={styles.title}>{t('installApp.title')}</Text>;
-
-    // Länkar
-    const { primaryLink, apkLinkAbs, apkFileName } = useMemo(() => {
-        // Prioritera versionerad fil för att undvika cache och mismatch
-        const best = m?.file?.trim() ? m.file! : (m?.apkUrl ?? '');
-        const bestAbs = absolutizeUrl(best);
-        const pk = m?.playUrl ? m.playUrl : bestAbs; // Play om satt, annars bestAbs
-        return {
-            primaryLink: pk,
-            apkLinkAbs: bestAbs,
-            apkFileName: basename(bestAbs || pk || 'app.apk'),
+        return () => {
+            cancelled = true;
         };
-    }, [m]);
-
-    if (error) {
-        return (
-            <ScrollView contentContainerStyle={styles.container}>
-                <Heading />
-                <Text style={styles.error}>{t('common.error')} {error}</Text>
-                <Text style={styles.note}>{t('installApp.hintConfig')}</Text>
-                {!!debugUrl && <Text style={styles.muted}>URL: {debugUrl}</Text>}
-                <View style={styles.badgeRow}>
-                    <Text style={styles.badge}>ENV: {env}</Text>
-                </View>
-            </ScrollView>
-        );
-    }
-
-    if (!m) {
-        return (
-            <ScrollView contentContainerStyle={styles.container}>
-                <Heading />
-                <Text style={styles.muted}>{t('common.loading')}</Text>
-                {!!debugUrl && <Text style={styles.muted}>URL: {debugUrl}</Text>}
-                <View style={styles.badgeRow}>
-                    <Text style={styles.badge}>ENV: {env}</Text>
-                </View>
-            </ScrollView>
-        );
-    }
+    }, [manifestUrl, env]);
 
     const expoUrl =
-        m.expoProjectUrl ||
+        m?.expoProjectUrl ||
         (extra?.EXPO_PROJECT_URL as string) ||
         'https://expo.dev/';
 
+    const { playUrl, apkUrl, apkFileName } = useMemo(() => {
+        const bestApk = m?.file?.trim()
+            ? m.file
+            : m?.apkUrl?.trim()
+                ? m.apkUrl
+                : fallbackApkUrl;
+
+        const bestPlay = m?.playUrl?.trim() ? m.playUrl : fallbackPlayUrl;
+
+        const apkAbs = absolutizeUrl(bestApk || '');
+        const playAbs = absolutizeUrl(bestPlay || '');
+
+        return {
+            playUrl: playAbs,
+            apkUrl: apkAbs,
+            apkFileName: basename(apkAbs || playAbs || 'app.apk'),
+        };
+    }, [m, fallbackApkUrl, fallbackPlayUrl]);
+
     const handleAndroidPress = () => {
-        if (m.playUrl) {
-            Linking.openURL(m.playUrl);
+        if (playUrl) {
+            Linking.openURL(playUrl);
             return;
         }
+
+        if (!apkUrl) return;
+
         if (Platform.OS === 'web') {
-            forceDownloadWeb(apkLinkAbs, apkFileName);
+            forceDownloadWeb(apkUrl, apkFileName);
         } else {
-            Linking.openURL(apkLinkAbs);
+            Linking.openURL(apkUrl);
         }
     };
+
+    const Heading = () => <Text style={styles.title}>{t('installApp.title')}</Text>;
 
     return (
         <ScrollView contentContainerStyle={styles.container}>
             <Heading />
+
             <Text style={styles.muted}>
-                {t('installApp.version', { version: m.versionName, code: m.versionCode })} • ENV: {env}
+                {m?.versionName
+                    ? t('installApp.version', {
+                        version: m.versionName,
+                        code: m.versionCode ?? 0,
+                    })
+                    : 'Ingen versionsinformation tillgänglig'}{' '}
+                • ENV: {env}
             </Text>
 
+            {!!warning && (
+                <View style={styles.notes}>
+                    <Text style={styles.text}>{warning}</Text>
+                </View>
+            )}
+
             <View style={styles.grid}>
-                {/* ANDROID */}
                 <View style={styles.card}>
                     <Text style={styles.cardTitle}>{t('installApp.androidTitle')}</Text>
 
                     {onAndroid ? (
-                        <TouchableOpacity style={styles.btn} onPress={handleAndroidPress}>
-                            <Text style={styles.btnText}>
-                                {m.playUrl ? t('installApp.openPlay') : t('installApp.downloadApk')}
-                            </Text>
-                        </TouchableOpacity>
+                        playUrl || apkUrl ? (
+                            <TouchableOpacity style={styles.btn} onPress={handleAndroidPress}>
+                                <Text style={styles.btnText}>
+                                    {playUrl ? t('installApp.openPlay') : t('installApp.downloadApk')}
+                                </Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <Text style={styles.text}>Ingen Android-installation är tillgänglig just nu.</Text>
+                        )
                     ) : (
                         <View style={styles.row}>
                             <View style={styles.qrBox}>
-                                <QRCode value={m.playUrl ? m.playUrl : apkLinkAbs} size={164} />
+                                <QRCode value={playUrl || apkUrl || expoUrl} size={164} />
                             </View>
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.text}>{t('installApp.scanAndroid')}</Text>
                                 <Text style={styles.muted} selectable>
-                                    {t('installApp.directLink')} {m.playUrl ? m.playUrl : apkLinkAbs}
+                                    {t('installApp.directLink')} {playUrl || apkUrl || expoUrl}
                                 </Text>
                             </View>
                         </View>
@@ -289,23 +308,24 @@ export default function InstallAppScreen() {
                         <Text style={styles.muted}>• {t('installApp.tip2')}</Text>
                     </View>
 
-                    {!!m.notes && (
+                    {!!m?.notes && (
                         <View style={styles.notes}>
                             <Text style={styles.text}>{m.notes}</Text>
                         </View>
                     )}
 
-                    {/* Debug-info */}
                     <View style={{ marginTop: 12 }}>
-                        <Text style={styles.muted}>Manifest: {debugUrl}</Text>
-                        <Text style={styles.muted}>APK: {apkLinkAbs}</Text>
-                        {!!m.file && <Text style={styles.muted}>Versioned file: {absolutizeUrl(m.file)}</Text>}
-                        {!!m.sha256 && <Text style={styles.muted}>SHA256: {m.sha256}</Text>}
-                        {!!m.date && <Text style={styles.muted}>Date: {m.date}</Text>}
+                        <Text style={styles.muted}>Manifest: {debugUrl || '(none)'}</Text>
+                        <Text style={styles.muted}>Play: {playUrl || '(none)'}</Text>
+                        <Text style={styles.muted}>APK: {apkUrl || '(none)'}</Text>
+                        {!!m?.file && (
+                            <Text style={styles.muted}>Versioned file: {absolutizeUrl(m.file)}</Text>
+                        )}
+                        {!!m?.sha256 && <Text style={styles.muted}>SHA256: {m.sha256}</Text>}
+                        {!!m?.date && <Text style={styles.muted}>Date: {m.date}</Text>}
                     </View>
                 </View>
 
-                {/* iOS */}
                 <View style={styles.card}>
                     <Text style={styles.cardTitle}>{t('installApp.iosTitle')}</Text>
 
@@ -328,7 +348,10 @@ export default function InstallAppScreen() {
                     </View>
 
                     {oniOS && (
-                        <TouchableOpacity style={[styles.btn, { marginTop: 12 }]} onPress={() => Linking.openURL(expoUrl)}>
+                        <TouchableOpacity
+                            style={[styles.btn, { marginTop: 12 }]}
+                            onPress={() => Linking.openURL(expoUrl)}
+                        >
                             <Text style={styles.btnText}>{t('installApp.openInExpoGo')}</Text>
                         </TouchableOpacity>
                     )}
@@ -344,8 +367,6 @@ const styles = StyleSheet.create({
     cardTitle: { fontSize: 18, fontWeight: '600', marginBottom: 8 },
     muted: { opacity: 0.7, fontSize: 12 },
     text: { fontSize: 14 },
-    error: { color: '#b00020', marginTop: 8 },
-    note: { marginTop: 12, opacity: 0.8 },
     grid: {
         marginTop: 12,
         gap: 16,
@@ -353,15 +374,32 @@ const styles = StyleSheet.create({
             ? ({ display: 'grid', gridTemplateColumns: '1fr 1fr' } as any)
             : {}),
     },
-    card: { borderWidth: StyleSheet.hairlineWidth, borderColor: '#ddd', borderRadius: 12, padding: 16 },
+    card: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: '#ddd',
+        borderRadius: 12,
+        padding: 16,
+    },
     row: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-    qrBox: { padding: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: '#eee', borderRadius: 12 },
+    qrBox: {
+        padding: 6,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: '#eee',
+        borderRadius: 12,
+    },
     btn: {
-        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
-        borderWidth: StyleSheet.hairlineWidth, borderColor: '#ddd', alignSelf: 'flex-start'
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: '#ddd',
+        alignSelf: 'flex-start',
     },
     btnText: { fontWeight: '600' },
-    notes: { backgroundColor: '#f6f7fb', borderRadius: 12, padding: 12, marginTop: 12 },
-    badgeRow: { marginTop: 8, flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-    badge: { fontSize: 12, paddingVertical: 2, paddingHorizontal: 6, borderRadius: 6, backgroundColor: '#f2f2f7' },
+    notes: {
+        backgroundColor: '#f6f7fb',
+        borderRadius: 12,
+        padding: 12,
+        marginTop: 12,
+    },
 });

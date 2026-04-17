@@ -1,16 +1,20 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
     ActivityIndicator,
     FlatList,
+    Modal,
     Platform,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useTranslation } from 'react-i18next';
 import ScreenContainer from '../components/ScreenContainer';
+import { useI18n } from '../hooks/useI18n';
 import { login } from '../api/auth';
 import {
     fetchOrderAssistStockHistory,
@@ -25,7 +29,14 @@ import {
 import { fetchVismaArticles, VismaArticle } from '../api/vismaArticles';
 import { fetchSuppliers, Supplier } from '../api/suppliers';
 import { getArticleLeadtime } from '../api/leadtime';
-import { APP_ENV, API_ROOT } from '../config/api';
+import {
+    fetchRecentPurchases,
+    type RecentPurchaseItem,
+} from '../api/recentPurchases';
+import {
+    fetchMatchingIncomingDeliveries,
+    type RecentIncomingDeliveryItem,
+} from '../api/recentIncomingDeliveries';
 
 type ExtendedArticle = VismaArticle & {
     adk_article_webshop?: boolean | null;
@@ -34,6 +45,7 @@ type ExtendedArticle = VismaArticle & {
         data?: {
             adk_article_webshop?: boolean | string | number | null;
             adk_stock_unit?: string | null;
+            adk_article_name?: string | null;
             [key: string]: any;
         };
         [key: string]: any;
@@ -45,11 +57,24 @@ type ProductSettingsMap = Record<
     {
         leadTimeDays?: number;
         safetyDays?: number;
+        packSize?: number;
     }
 >;
 
 type AutoLeadTimeMap = Record<string, number>;
 type WebshopFilter = 'ALL' | 'WEBSHOP_ONLY';
+type ResolvedArticleMap = Record<string, true>;
+type LoadingArticleMap = Record<string, boolean>;
+type ErrorByArticleMap = Record<string, string>;
+type RecentIncomingDebugMap = Record<
+    string,
+    {
+        source?: string;
+        rowKeys?: string[];
+        debug?: Record<string, unknown>;
+        error?: string;
+    }
+>;
 
 type AssistantRow = {
     article: string;
@@ -60,11 +85,16 @@ type AssistantRow = {
     totalQty: number;
     avgPerDay: number;
     avgPerWeek: number;
+    avgPerMonth: number;
+    avgPerQuarter: number;
+    avgPerYear: number;
     leadTimeDays: number;
     safetyDays: number;
+    packSize: number;
     hasCustomLeadTime: boolean;
     hasAutoLeadTime: boolean;
     hasCustomSafetyDays: boolean;
+    hasCustomPackSize: boolean;
     forecastLeadTimeQty: number;
     safetyQty: number;
     targetStockQty: number;
@@ -82,8 +112,212 @@ type AssistantRow = {
 
 type SortBy = 'article' | 'title' | 'supplier' | 'roundedOrderQty';
 
+type LeadTimeFetchSettings = {
+    minValidDays: number;
+    maxValidDays: number;
+    maxBookingHeads: number;
+    maxDeliveryHeads: number;
+    timeoutMs: number;
+};
+
+const MATCHING_DELIVERY_SEARCH_WINDOW_DAYS = 30;
+const REORDER_ASSIST_SETTINGS_STORAGE_KEY = 'reorderAssistScreenSettings:v1';
+
+type ReorderAssistPersistedSettings = {
+    from?: string;
+    to?: string;
+    leadTimeDays?: string;
+    safetyDays?: string;
+    packSize?: string;
+    minValidDays?: string;
+    maxValidDays?: string;
+    maxBookingHeads?: string;
+    maxDeliveryHeads?: string;
+    leadTimeTimeoutMs?: string;
+    showAdvancedLeadtime?: boolean;
+    search?: string;
+    statusFilter?: 'ALL' | 'OK' | 'WATCH' | 'ORDER';
+    webshopFilter?: WebshopFilter;
+    sortBy?: SortBy;
+    productSettings?: ProductSettingsMap;
+};
+
+type TranslateFn = (key: string, options?: any) => string;
+type HelpTopic = 'overview' | 'leadTime' | 'safetyDays' | 'packSize' | 'decision' | 'history' | 'search';
+type HelpContent = {
+    title: string;
+    sections: Array<{
+        title: string;
+        lines: string[];
+    }>;
+};
+
+function HelpIconButton({ onPress }: { onPress: () => void }) {
+    return (
+        <TouchableOpacity style={styles.helpIconButton} onPress={onPress}>
+            <Text style={styles.helpIconText}>i</Text>
+        </TouchableOpacity>
+    );
+}
+
+function LabelWithHelp({
+    label,
+    onPress,
+}: {
+    label: string;
+    onPress: () => void;
+}) {
+    return (
+        <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>{label}</Text>
+            <HelpIconButton onPress={onPress} />
+        </View>
+    );
+}
+
+function buildHelpContent(topic: HelpTopic, t: TranslateFn): HelpContent {
+    switch (topic) {
+        case 'leadTime':
+            return {
+                title: t('reorderAssist.leadTime'),
+                sections: [
+                    {
+                        title: t('reorderAssist.helpSectionDefaults'),
+                        lines: [
+                            t('reorderAssist.help.defaultLeadTime'),
+                            t('reorderAssist.help.leadTimeFetch'),
+                        ],
+                    },
+                ],
+            };
+        case 'safetyDays':
+            return {
+                title: t('reorderAssist.safetyDays'),
+                sections: [
+                    {
+                        title: t('reorderAssist.helpSectionDefaults'),
+                        lines: [t('reorderAssist.help.defaultSafetyDays')],
+                    },
+                ],
+            };
+        case 'packSize':
+            return {
+                title: t('raw.field.quantity'),
+                sections: [
+                    {
+                        title: t('reorderAssist.helpSectionDefaults'),
+                        lines: [t('reorderAssist.help.packSize')],
+                    },
+                ],
+            };
+        case 'decision':
+            return {
+                title: t('orderingDecision'),
+                sections: [
+                    {
+                        title: t('reorderAssist.helpSectionDecision'),
+                        lines: [
+                            t('reorderAssist.help.decision'),
+                            t('reorderAssist.help.formulas'),
+                            `${t('reorderAssist.stock')}: ${t('reorderAssist.help.stock')}`,
+                            `${t('reorderAssist.dailyUsage')}: ${t('reorderAssist.help.dailyUsage')}`,
+                        ],
+                    },
+                ],
+            };
+        case 'history':
+            return {
+                title: t('reorderAssist.latestOrdersAndDeliveries'),
+                sections: [
+                    {
+                        title: t('reorderAssist.helpSectionHistory'),
+                        lines: [t('reorderAssist.help.history')],
+                    },
+                ],
+            };
+        case 'search':
+            return {
+                title: t('common.searchShort'),
+                sections: [
+                    {
+                        title: t('common.searchShort'),
+                        lines: [
+                            t('reorderAssist.help.search'),
+                            t('reorderAssist.help.searchChips'),
+                        ],
+                    },
+                ],
+            };
+        case 'overview':
+        default:
+            return {
+                title: t('reorderAssist.helpOverviewTitle'),
+                sections: [
+                    {
+                        title: t('reorderAssist.helpSectionBasics'),
+                        lines: [
+                            t('reorderAssist.help.page'),
+                            `${t('reorderAssist.dateFrom')}: ${t('reorderAssist.help.dateFrom')}`,
+                            `${t('reorderAssist.dateTo')}: ${t('reorderAssist.help.dateTo')}`,
+                        ],
+                    },
+                    {
+                        title: t('reorderAssist.helpSectionDefaults'),
+                        lines: [
+                            `${t('reorderAssist.leadTime')}: ${t('reorderAssist.help.defaultLeadTime')}`,
+                            `${t('reorderAssist.safetyDays')}: ${t('reorderAssist.help.defaultSafetyDays')}`,
+                            `${t('raw.field.quantity')}: ${t('reorderAssist.help.packSize')}`,
+                        ],
+                    },
+                    {
+                        title: t('reorderAssist.helpSectionLeadTimeFetch'),
+                        lines: [t('reorderAssist.help.leadTimeFetch')],
+                    },
+                    {
+                        title: t('reorderAssist.helpSectionDecision'),
+                        lines: [
+                            t('reorderAssist.help.decision'),
+                            t('reorderAssist.help.formulas'),
+                        ],
+                    },
+                    {
+                        title: t('reorderAssist.helpSectionHistory'),
+                        lines: [t('reorderAssist.help.history')],
+                    },
+                ],
+            };
+    }
+}
+
+function log(...args: any[]) {
+    console.log('[ReorderScreen]', ...args);
+}
+
+function warn(...args: any[]) {
+    console.warn('[ReorderScreen]', ...args);
+}
+
 function isValidDateString(value: string) {
     return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function formatDateString(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function parseDateString(value: string) {
+    if (!isValidDateString(value)) return null;
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function adjustNumericString(value: string, delta: number, minValue: number) {
+    const parsed = Number(value);
+    const base = Number.isFinite(parsed) ? parsed : minValue;
+    return String(Math.max(minValue, base + delta));
 }
 
 function daysBetweenInclusive(from: string, to: string) {
@@ -107,6 +341,50 @@ function normalizeArticleCode(value: unknown): string {
     return String(value ?? '').trim().toUpperCase();
 }
 
+function normalizeDocNo(value: unknown): string {
+    if (value == null) return '';
+
+    const raw = String(value).trim();
+    if (!raw) return '';
+
+    const numeric = Number(raw.replace(',', '.'));
+    if (Number.isFinite(numeric)) {
+        return String(Math.trunc(numeric));
+    }
+
+    const digits = raw.replace(/\D+/g, '');
+    if (!digits) return '';
+
+    return digits.replace(/^0+/, '') || '0';
+}
+
+function getIncomingDeliveryOrderKeys(entry: RecentIncomingDeliveryItem): string[] {
+    const candidates = [
+        (entry as any).bestnr,
+        (entry as any).orderDocumentNumber,
+        (entry as any).orderNo,
+        (entry as any).purchaseOrderNumber,
+        (entry as any).bookingDocumentNumber,
+        (entry as any).referenceDocumentNumber,
+        (entry as any).referenceNo,
+    ];
+
+    return Array.from(new Set(candidates.map(normalizeDocNo).filter(Boolean)));
+}
+
+function getPurchaseOrderKey(entry: RecentPurchaseItem): string {
+    return normalizeDocNo(
+        (entry as any).orderDocumentNumber ??
+        (entry as any).bestnr ??
+        (entry as any).orderNo ??
+        (entry as any).purchaseOrderNumber
+    );
+}
+
+function getIncomingRequestKey(article: string, bestnr: string): string {
+    return `${normalizeArticleCode(article)}::${normalizeDocNo(bestnr)}`;
+}
+
 function getStockArticle(row: StockBalanceRow): string {
     return normalizeArticleCode(row.article ?? row.code ?? row.ARARTN);
 }
@@ -120,6 +398,48 @@ function getStockQty(row: StockBalanceRow): number {
     }
 
     return 0;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+    if (!items.length || size <= 0) return [];
+
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+        chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
+}
+
+function mergeStockBalanceResponses(
+    current: StockBalanceResponse | null,
+    incoming: StockBalanceResponse | null | undefined
+): StockBalanceResponse {
+    const merged = new Map<string, StockBalanceRow>();
+    const extras: StockBalanceRow[] = [];
+
+    for (const row of current?.rows ?? []) {
+        const article = getStockArticle(row);
+        if (article) {
+            merged.set(article, row);
+        } else {
+            extras.push(row);
+        }
+    }
+
+    for (const row of incoming?.rows ?? []) {
+        const article = getStockArticle(row);
+        if (article) {
+            merged.set(article, row);
+        } else {
+            extras.push(row);
+        }
+    }
+
+    return {
+        ...(current ?? {}),
+        ...(incoming ?? {}),
+        rows: [...extras, ...Array.from(merged.values())],
+    };
 }
 
 function getStatus(
@@ -138,6 +458,16 @@ function parseOptionalNumber(value: string): number | undefined {
     const num = Number(trimmed);
     if (!Number.isFinite(num) || num < 0) return undefined;
     return num;
+}
+
+function parsePositiveNumberWithFallback(value: string, fallback: number) {
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? num : fallback;
+}
+
+function parseNonNegativeNumberWithFallback(value: string, fallback: number) {
+    const num = Number(value);
+    return Number.isFinite(num) && num >= 0 ? num : fallback;
 }
 
 function startOfDay(input: Date) {
@@ -187,10 +517,10 @@ function getOrderDecisionText(item: AssistantRow, t: (key: string, options?: any
 function normalizeBooleanLike(value: unknown): boolean {
     if (value === true) return true;
     if (value === false || value == null) return false;
-    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'number') return value !== 0;
 
     const normalized = String(value).trim().toLowerCase();
-    return ['1', 'true', 'y', 'yes', 'j', 'ja', 't'].includes(normalized);
+    return ['1', '-1', 'true', 'y', 'yes', 'j', 'ja', 't', 'x'].includes(normalized);
 }
 
 function isWebshopArticle(articleInfo?: ExtendedArticle): boolean {
@@ -199,6 +529,10 @@ function isWebshopArticle(articleInfo?: ExtendedArticle): boolean {
         articleInfo?.raw?.data?.adk_article_webshop;
 
     return normalizeBooleanLike(value);
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function downloadCsv(filename: string, rows: AssistantRow[]) {
@@ -214,11 +548,16 @@ function downloadCsv(filename: string, rows: AssistantRow[]) {
         'Total Usage',
         'Per Day',
         'Per Week',
+        'Per Month',
+        'Per Quarter',
+        'Per Year',
         'Lead Time Days',
         'Safety Days',
+        'Pack Size',
         'Custom Lead Time',
         'Auto Lead Time',
         'Custom Safety Days',
+        'Custom Pack Size',
         'On Hand',
         'Days Until Out Of Stock',
         'Estimated Out Of Stock Date',
@@ -249,11 +588,16 @@ function downloadCsv(filename: string, rows: AssistantRow[]) {
                 row.totalQty,
                 row.avgPerDay,
                 row.avgPerWeek,
+                row.avgPerMonth,
+                row.avgPerQuarter,
+                row.avgPerYear,
                 row.leadTimeDays,
                 row.safetyDays,
+                row.packSize,
                 row.hasCustomLeadTime ? 'true' : 'false',
                 row.hasAutoLeadTime ? 'true' : 'false',
                 row.hasCustomSafetyDays ? 'true' : 'false',
+                row.hasCustomPackSize ? 'true' : 'false',
                 row.currentStockQty,
                 row.daysUntilOutOfStock ?? '',
                 row.estimatedOutOfStockDate ?? '',
@@ -290,8 +634,7 @@ function buildAssistantRows(
     to: string,
     globalLeadTimeDays: number,
     globalSafetyDays: number,
-    packSize: number,
-    missingTitleText: string
+    globalPackSize: number
 ): AssistantRow[] {
     const days = Math.max(daysBetweenInclusive(from, to), 1);
     const today = startOfDay(new Date());
@@ -304,7 +647,7 @@ function buildAssistantRows(
 
     const articleMap = new Map<string, ExtendedArticle>();
     for (const row of articleRows) {
-        const article = normalizeArticleCode(row.ARARTN ?? (row as any).adk_article_number);
+        const article = normalizeArticleCode((row as any).adk_article_number ?? row.ARARTN);
         if (article) articleMap.set(article, row);
     }
 
@@ -318,21 +661,21 @@ function buildAssistantRows(
         .map((row) => {
             const article = normalizeArticleCode(row.article);
             const usageUnit = row.unit ? String(row.unit) : undefined;
-            const totalQty = Number(row.totalOutQty ?? 0);
 
+            const totalQty = Number(row.totalOutQty ?? 0);
             const articleInfo = articleMap.get(article);
             const webshopArticle = isWebshopArticle(articleInfo);
+
             const title = String(
-                articleInfo?.ARNAMN ??
                 (articleInfo as any)?.adk_article_name ??
                 articleInfo?.raw?.data?.adk_article_name ??
                 ''
             ).trim();
 
             const supplierNumber = String(
-                articleInfo?.LEVNR ??
                 (articleInfo as any)?.adk_article_supplier_number ??
                 articleInfo?.raw?.data?.adk_article_supplier_number ??
+                articleInfo?.LEVNR ??
                 ''
             ).trim();
 
@@ -353,9 +696,13 @@ function buildAssistantRows(
                 globalLeadTimeDays;
 
             const effectiveSafetyDays = settings?.safetyDays ?? globalSafetyDays;
+            const effectivePackSize = settings?.packSize ?? globalPackSize;
 
             const avgPerDay = totalQty / days;
             const avgPerWeek = avgPerDay * 7;
+            const avgPerMonth = avgPerDay * 30;
+            const avgPerQuarter = avgPerDay * 90;
+            const avgPerYear = avgPerDay * 365;
             const forecastLeadTimeQty = avgPerDay * effectiveLeadTimeDays;
             const safetyQty = avgPerDay * effectiveSafetyDays;
             const targetStockQty = forecastLeadTimeQty + safetyQty;
@@ -364,7 +711,7 @@ function buildAssistantRows(
             const currentStockQty = stockRow ? getStockQty(stockRow) : 0;
 
             const suggestedOrderQty = Math.max(0, targetStockQty - currentStockQty);
-            const roundedOrderQty = roundUpToPackSize(suggestedOrderQty, packSize);
+            const roundedOrderQty = roundUpToPackSize(suggestedOrderQty, effectivePackSize);
 
             let daysUntilOutOfStock: number | null = null;
             let estimatedOutOfStockDate: string | null = null;
@@ -388,23 +735,28 @@ function buildAssistantRows(
 
             return {
                 article,
-                title: title || missingTitleText,
+                title: title || article,
                 unit:
                     usageUnit ||
-                    articleInfo?.ARENHET ||
-                    articleInfo?.adk_stock_unit ||
+                    (articleInfo as any)?.adk_stock_unit ||
                     articleInfo?.raw?.data?.adk_stock_unit ||
+                    articleInfo?.ARENHET ||
                     undefined,
                 supplier: supplier || undefined,
                 supplierNumber: supplierNumber || undefined,
                 totalQty: round2(totalQty),
                 avgPerDay: round2(avgPerDay),
                 avgPerWeek: round2(avgPerWeek),
+                avgPerMonth: round2(avgPerMonth),
+                avgPerQuarter: round2(avgPerQuarter),
+                avgPerYear: round2(avgPerYear),
                 leadTimeDays: effectiveLeadTimeDays,
                 safetyDays: effectiveSafetyDays,
+                packSize: effectivePackSize,
                 hasCustomLeadTime,
                 hasAutoLeadTime,
                 hasCustomSafetyDays: settings?.safetyDays != null,
+                hasCustomPackSize: settings?.packSize != null,
                 forecastLeadTimeQty: round2(forecastLeadTimeQty),
                 safetyQty: round2(safetyQty),
                 targetStockQty: round2(targetStockQty),
@@ -439,83 +791,738 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     });
 }
 
-async function fetchAutoLeadTimesProgressively(
+function readRowsForArticle<T>(value: unknown, article: string): T[] {
+    if (!value) return [];
+
+    if (Array.isArray(value)) {
+        return value as T[];
+    }
+
+    if (typeof value !== 'object') return [];
+
+    const directRows = (value as any).rows;
+    if (Array.isArray(directRows)) {
+        return directRows as T[];
+    }
+
+    if (directRows && typeof directRows === 'object') {
+        const byArticle = directRows[article];
+        if (Array.isArray(byArticle)) {
+            return byArticle as T[];
+        }
+
+        const normalizedArticle = normalizeArticleCode(article);
+        const matchingKey = Object.keys(directRows).find(
+            (key) => normalizeArticleCode(key) === normalizedArticle
+        );
+        if (matchingKey && Array.isArray(directRows[matchingKey])) {
+            return directRows[matchingKey] as T[];
+        }
+    }
+
+    return [];
+}
+
+async function fetchRecentOrderAndDeliveryHistoryForArticles(
     articleCodes: string[],
-    onBatch: (partial: AutoLeadTimeMap, processed: number, total: number) => void,
+    from: string,
+    to: string,
+    onPurchaseItem: (article: string, items: RecentPurchaseItem[]) => void,
     shouldStop: () => boolean
 ): Promise<void> {
-    const uniqueArticles = Array.from(
-        new Set(articleCodes.map(normalizeArticleCode).filter(Boolean))
-    );
+    const uniqueArticles = Array.from(new Set(articleCodes.map(normalizeArticleCode).filter(Boolean)));
 
-    const batchSize = 10;
-    const total = uniqueArticles.length;
-    let processed = 0;
-
-    for (let i = 0; i < uniqueArticles.length; i += batchSize) {
+    for (const article of uniqueArticles) {
         if (shouldStop()) return;
 
-        const batch = uniqueArticles.slice(i, i + batchSize);
-        const partial: AutoLeadTimeMap = {};
+        try {
+            log('[History] fetch start', {
+                article,
+                purchasesFrom: from,
+                purchasesTo: to,
+                deliveriesFilteredByDate: false,
+            });
 
-        const settled = await Promise.allSettled(
-            batch.map((article) =>
-                withTimeout(
-                    getArticleLeadtime(article, {
-                        min_valid_days: 0,
-                        max_valid_days: 120,
-                        max_booking_heads: 10000,
-                        max_delivery_heads: 10000,
-                    }),
-                    65000
-                )
-            )
-        );
+            const purchaseRes = await withTimeout(
+                fetchRecentPurchases({
+                    from,
+                    to,
+                    article,
+                    limit_per_article: 2,
+                }),
+                120000
+            );
 
-        settled.forEach((entry, index) => {
-            const article = batch[index];
+            const purchaseItems = readRowsForArticle<RecentPurchaseItem>(purchaseRes, article);
+            onPurchaseItem(article, purchaseItems);
+        } catch (purchaseErr) {
+            warn('[History] purchases failed', article, purchaseErr);
+            onPurchaseItem(article, []);
+        }
 
-            if (entry.status !== 'fulfilled') {
-                console.warn('[LeadTime] failed for article', article, entry.reason);
-                return;
-            }
-
-            const suggested = entry.value?.suggested_lead_time_days;
-            if (Number.isFinite(suggested) && suggested >= 0) {
-                partial[article] = suggested;
-            }
-        });
-
-        processed += batch.length;
-        onBatch(partial, processed, total);
+        if (shouldStop()) return;
+        await sleep(25);
     }
 }
 
+function getStatusFilterLabel(
+    value: 'ALL' | 'OK' | 'WATCH' | 'ORDER',
+    t: (key: string, options?: any) => string
+) {
+    switch (value) {
+        case 'ALL':
+            return t('common.all');
+        case 'OK':
+            return t('reorderAssist.orderOk');
+        case 'WATCH':
+            return t('reorderAssist.orderSoon');
+        case 'ORDER':
+            return t('reorderAssist.orderNow');
+        default:
+            return value;
+    }
+}
+
+function getRowStatusLabel(
+    value: 'OK' | 'WATCH' | 'ORDER',
+    t: (key: string, options?: any) => string
+) {
+    switch (value) {
+        case 'OK':
+            return t('reorderAssist.orderOk');
+        case 'WATCH':
+            return t('reorderAssist.orderSoon');
+        case 'ORDER':
+            return t('reorderAssist.orderNow');
+        default:
+            return value;
+    }
+}
+
+function getFetchErrorMessage(
+    type:
+        | 'date'
+        | 'leadTime'
+        | 'safety'
+        | 'packSize'
+        | 'leadTimeRange'
+        | 'fromBeforeTo'
+        | 'fetch',
+    t: (key: string, options?: any) => string
+) {
+    switch (type) {
+        case 'date':
+            return `${t('common.error')} ${t('common.datePlaceholder')}`;
+        case 'leadTime':
+            return `${t('common.error')} ${t('reorderAssist.leadTime')}`;
+        case 'safety':
+            return `${t('common.error')} ${t('reorderAssist.safetyDays')}`;
+        case 'packSize':
+            return `${t('common.error')} ${t('raw.field.quantity')}`;
+        case 'leadTimeRange':
+            return `${t('common.error')} Min/Max valid lead time`;
+        case 'fromBeforeTo':
+            return `${t('common.error')} ${t('reorderAssist.dateFrom')} / ${t('reorderAssist.dateTo')}`;
+        case 'fetch':
+        default:
+            return t('common.server_error');
+    }
+}
+
+type ReorderHeaderProps = {
+    t: (key: string, options?: any) => string;
+    onOpenHelp: (topic: HelpTopic) => void;
+    isWeb: boolean;
+    onOpenFromDatePicker: () => void;
+    onOpenToDatePicker: () => void;
+
+    from: string;
+    to: string;
+    setFrom: (value: string) => void;
+    setTo: (value: string) => void;
+
+    leadTimeDays: string;
+    safetyDays: string;
+    packSize: string;
+    setLeadTimeDays: (value: string) => void;
+    setSafetyDays: (value: string) => void;
+    setPackSize: (value: string) => void;
+
+    minValidDays: string;
+    maxValidDays: string;
+    maxBookingHeads: string;
+    maxDeliveryHeads: string;
+    leadTimeTimeoutMs: string;
+    setMinValidDays: (value: string) => void;
+    setMaxValidDays: (value: string) => void;
+    setMaxBookingHeads: (value: string) => void;
+    setMaxDeliveryHeads: (value: string) => void;
+    setLeadTimeTimeoutMs: (value: string) => void;
+
+    showAdvancedLeadtime: boolean;
+    setShowAdvancedLeadtime: React.Dispatch<React.SetStateAction<boolean>>;
+
+    search: string;
+    setSearch: (value: string) => void;
+
+    sortBy: SortBy;
+    setSortBy: (value: SortBy) => void;
+
+    statusFilter: 'ALL' | 'OK' | 'WATCH' | 'ORDER';
+    setStatusFilter: (value: 'ALL' | 'OK' | 'WATCH' | 'ORDER') => void;
+
+    webshopFilter: WebshopFilter;
+    setWebshopFilter: (value: WebshopFilter) => void;
+
+    handleFetch: () => void;
+    loading: boolean;
+
+    filteredRowsLength: number;
+    reorderRowsLength: number;
+    error: string | null;
+    loadingLeadTimes: boolean;
+    loadingStock: boolean;
+    leadTimeProgress: { processed: number; total: number };
+    history: StockHistoryResponse | null;
+
+    onExportCsv: () => void;
+};
+
+const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProps) {
+    const {
+        t,
+        onOpenHelp,
+        isWeb,
+        onOpenFromDatePicker,
+        onOpenToDatePicker,
+        from,
+        to,
+        setFrom,
+        setTo,
+        leadTimeDays,
+        safetyDays,
+        packSize,
+        setLeadTimeDays,
+        setSafetyDays,
+        setPackSize,
+        minValidDays,
+        maxValidDays,
+        maxBookingHeads,
+        maxDeliveryHeads,
+        leadTimeTimeoutMs,
+        setMinValidDays,
+        setMaxValidDays,
+        setMaxBookingHeads,
+        setMaxDeliveryHeads,
+        setLeadTimeTimeoutMs,
+        showAdvancedLeadtime,
+        setShowAdvancedLeadtime,
+        search,
+        setSearch,
+        sortBy,
+        setSortBy,
+        statusFilter,
+        setStatusFilter,
+        webshopFilter,
+        setWebshopFilter,
+        handleFetch,
+        loading,
+        filteredRowsLength,
+        reorderRowsLength,
+        error,
+        loadingLeadTimes,
+        loadingStock,
+        leadTimeProgress,
+        history,
+        onExportCsv,
+    } = props;
+
+    return (
+        <>
+            <View style={styles.filtersCompact}>
+
+                <View style={styles.row}>
+                    <View style={styles.fieldHalf}>
+                        <LabelWithHelp
+                            label={t('common.searchShort')}
+                            onPress={() => onOpenHelp('search')}
+                        />
+                        <TextInput
+                            value={search}
+                            onChangeText={setSearch}
+                            placeholder={t('searchPlaceholder')}
+                            style={styles.inputCompact}
+                        />
+                    </View>
+                </View>
+
+                <View style={styles.row}>
+                    <View style={styles.fieldHalf}>
+                        <Text style={styles.label}>{t('reorderAssist.dateFrom')}</Text>
+                        {isWeb ? (
+                            <TextInput
+                                value={from}
+                                onChangeText={setFrom}
+                                placeholder={t('common.datePlaceholder')}
+                                style={styles.inputCompact}
+                            />
+                        ) : (
+                            <TouchableOpacity style={styles.datePickerButton} onPress={onOpenFromDatePicker}>
+                                <Text style={styles.datePickerButtonText}>{from}</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                    <View style={styles.fieldHalf}>
+                        <Text style={styles.label}>{t('reorderAssist.dateTo')}</Text>
+                        {isWeb ? (
+                            <TextInput
+                                value={to}
+                                onChangeText={setTo}
+                                placeholder={t('common.datePlaceholder')}
+                                style={styles.inputCompact}
+                            />
+                        ) : (
+                            <TouchableOpacity style={styles.datePickerButton} onPress={onOpenToDatePicker}>
+                                <Text style={styles.datePickerButtonText}>{to}</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+
+                {isWeb ? (
+                    <View style={styles.row}>
+                        <View style={styles.fieldThird}>
+                            <LabelWithHelp
+                                label={t('reorderAssist.leadTime')}
+                                onPress={() => onOpenHelp('leadTime')}
+                            />
+                            <View style={styles.stepperRow}>
+                                <TouchableOpacity
+                                    style={styles.stepperButton}
+                                    onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, -1, 0))}
+                                >
+                                    <Text style={styles.stepperButtonText}>-</Text>
+                                </TouchableOpacity>
+                                <TextInput
+                                    value={leadTimeDays}
+                                    onChangeText={setLeadTimeDays}
+                                    keyboardType="numeric"
+                                    style={styles.inputCompactStepper}
+                                />
+                                <TouchableOpacity
+                                    style={styles.stepperButton}
+                                    onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, 1, 0))}
+                                >
+                                    <Text style={styles.stepperButtonText}>+</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                        <View style={styles.fieldThird}>
+                            <LabelWithHelp
+                                label={t('reorderAssist.safetyDays')}
+                                onPress={() => onOpenHelp('safetyDays')}
+                            />
+                            <View style={styles.stepperRow}>
+                                <TouchableOpacity
+                                    style={styles.stepperButton}
+                                    onPress={() => setSafetyDays(adjustNumericString(safetyDays, -1, 0))}
+                                >
+                                    <Text style={styles.stepperButtonText}>-</Text>
+                                </TouchableOpacity>
+                                <TextInput
+                                    value={safetyDays}
+                                    onChangeText={setSafetyDays}
+                                    keyboardType="numeric"
+                                    style={styles.inputCompactStepper}
+                                />
+                                <TouchableOpacity
+                                    style={styles.stepperButton}
+                                    onPress={() => setSafetyDays(adjustNumericString(safetyDays, 1, 0))}
+                                >
+                                    <Text style={styles.stepperButtonText}>+</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                        <View style={styles.fieldThird}>
+                            <LabelWithHelp
+                                label={t('raw.field.quantity')}
+                                onPress={() => onOpenHelp('packSize')}
+                            />
+                            <View style={styles.stepperRow}>
+                                <TouchableOpacity
+                                    style={styles.stepperButton}
+                                    onPress={() => setPackSize(adjustNumericString(packSize, -1, 1))}
+                                >
+                                    <Text style={styles.stepperButtonText}>-</Text>
+                                </TouchableOpacity>
+                                <TextInput
+                                    value={packSize}
+                                    onChangeText={setPackSize}
+                                    keyboardType="numeric"
+                                    style={styles.inputCompactStepper}
+                                />
+                                <TouchableOpacity
+                                    style={styles.stepperButton}
+                                    onPress={() => setPackSize(adjustNumericString(packSize, 1, 1))}
+                                >
+                                    <Text style={styles.stepperButtonText}>+</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                ) : (
+                    <>
+                        <View style={styles.row}>
+                            <View style={styles.fieldHalf}>
+                                <LabelWithHelp
+                                    label={t('reorderAssist.leadTime')}
+                                    onPress={() => onOpenHelp('leadTime')}
+                                />
+                                <View style={styles.stepperRow}>
+                                    <TouchableOpacity
+                                        style={styles.stepperButton}
+                                        onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, -1, 0))}
+                                    >
+                                        <Text style={styles.stepperButtonText}>-</Text>
+                                    </TouchableOpacity>
+                                    <TextInput
+                                        value={leadTimeDays}
+                                        onChangeText={setLeadTimeDays}
+                                        keyboardType="numeric"
+                                        style={styles.inputCompactStepper}
+                                    />
+                                    <TouchableOpacity
+                                        style={styles.stepperButton}
+                                        onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, 1, 0))}
+                                    >
+                                        <Text style={styles.stepperButtonText}>+</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                        <View style={styles.row}>
+                            <View style={styles.fieldHalf}>
+                                <LabelWithHelp
+                                    label={t('reorderAssist.safetyDays')}
+                                    onPress={() => onOpenHelp('safetyDays')}
+                                />
+                                <View style={styles.stepperRow}>
+                                    <TouchableOpacity
+                                        style={styles.stepperButton}
+                                        onPress={() => setSafetyDays(adjustNumericString(safetyDays, -1, 0))}
+                                    >
+                                        <Text style={styles.stepperButtonText}>-</Text>
+                                    </TouchableOpacity>
+                                    <TextInput
+                                        value={safetyDays}
+                                        onChangeText={setSafetyDays}
+                                        keyboardType="numeric"
+                                        style={styles.inputCompactStepper}
+                                    />
+                                    <TouchableOpacity
+                                        style={styles.stepperButton}
+                                        onPress={() => setSafetyDays(adjustNumericString(safetyDays, 1, 0))}
+                                    >
+                                        <Text style={styles.stepperButtonText}>+</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                        <View style={styles.row}>
+                            <View style={styles.fieldHalf}>
+                                <LabelWithHelp
+                                    label={t('raw.field.quantity')}
+                                    onPress={() => onOpenHelp('packSize')}
+                                />
+                                <View style={styles.stepperRow}>
+                                    <TouchableOpacity
+                                        style={styles.stepperButton}
+                                        onPress={() => setPackSize(adjustNumericString(packSize, -1, 1))}
+                                    >
+                                        <Text style={styles.stepperButtonText}>-</Text>
+                                    </TouchableOpacity>
+                                    <TextInput
+                                        value={packSize}
+                                        onChangeText={setPackSize}
+                                        keyboardType="numeric"
+                                        style={styles.inputCompactStepper}
+                                    />
+                                    <TouchableOpacity
+                                        style={styles.stepperButton}
+                                        onPress={() => setPackSize(adjustNumericString(packSize, 1, 1))}
+                                    >
+                                        <Text style={styles.stepperButtonText}>+</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                    </>
+                )}
+                <View style={styles.row}>
+                    <View style={styles.fieldHalf}>
+                        <Text style={styles.label}>{t('leadtime.minValidDays')}</Text>
+                        <TextInput
+                            value={minValidDays}
+                            onChangeText={setMinValidDays}
+                            keyboardType="numeric"
+                            style={styles.inputCompact}
+                        />
+                    </View>
+                    <View style={styles.fieldHalf}>
+                        <Text style={styles.label}>{t('leadtime.maxValidDays')}</Text>
+                        <TextInput
+                            value={maxValidDays}
+                            onChangeText={setMaxValidDays}
+                            keyboardType="numeric"
+                            style={styles.inputCompact}
+                        />
+                    </View>
+                </View>
+
+                <TouchableOpacity
+                    style={styles.advancedToggle}
+                    onPress={() => setShowAdvancedLeadtime((prev) => !prev)}
+                >
+                    <Text style={styles.advancedToggleText}>
+                        {showAdvancedLeadtime
+                            ? t('leadtime.hideAdvanced')
+                            : t('leadtime.showAdvanced')}
+                    </Text>
+                </TouchableOpacity>
+
+                {showAdvancedLeadtime ? (
+                    <View style={styles.advancedBox}>
+                        <View style={styles.row}>
+                            <View style={styles.fieldThird}>
+                                <Text style={styles.label}>{t('leadtime.maxBookingHeads')}</Text>
+                                <TextInput
+                                    value={maxBookingHeads}
+                                    onChangeText={setMaxBookingHeads}
+                                    keyboardType="numeric"
+                                    style={styles.inputCompact}
+                                />
+                            </View>
+                            <View style={styles.fieldThird}>
+                                <Text style={styles.label}>{t('leadtime.maxDeliveryHeads')}</Text>
+                                <TextInput
+                                    value={maxDeliveryHeads}
+                                    onChangeText={setMaxDeliveryHeads}
+                                    keyboardType="numeric"
+                                    style={styles.inputCompact}
+                                />
+                            </View>
+                            <View style={styles.fieldThird}>
+                                <Text style={styles.label}>{t('leadtime.timeoutMs')}</Text>
+                                <TextInput
+                                    value={leadTimeTimeoutMs}
+                                    onChangeText={setLeadTimeTimeoutMs}
+                                    keyboardType="numeric"
+                                    style={styles.inputCompact}
+                                />
+                            </View>
+                        </View>
+
+                        <Text style={styles.advancedHint}>
+                            {t('leadtime.advancedHint')}
+                        </Text>
+                    </View>
+                ) : null}
+
+                <View style={styles.actionRow}>
+                    <TouchableOpacity style={styles.buttonPrimary} onPress={handleFetch} disabled={loading}>
+                        <Text style={styles.buttonText}>
+                            {loading ? t('loading') : t('calculate')}
+                        </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.buttonSecondary}
+                        onPress={() => onOpenHelp('overview')}
+                    >
+                        <Text style={styles.buttonSecondaryText}>{t('reorderAssist.helpButton')}</Text>
+                    </TouchableOpacity>
+
+                    {Platform.OS === 'web' && filteredRowsLength > 0 ? (
+                        <TouchableOpacity style={styles.buttonSecondary} onPress={onExportCsv}>
+                            <Text style={styles.buttonSecondaryText}>{t('export.exportCsv')}</Text>
+                        </TouchableOpacity>
+                    ) : null}
+                </View>
+            </View>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            {!loading && loadingLeadTimes ? (
+                <Text style={styles.infoText}>
+                    {t('fetchingLeadTimes')} {leadTimeProgress.processed}/{leadTimeProgress.total}
+                </Text>
+            ) : null}
+
+            {!loading && loadingStock ? (
+                <Text style={styles.infoText}>
+                    {t('reorderAssist.loadingStockGlobal')}
+                </Text>
+            ) : null}
+
+            {history ? (
+                <View style={styles.summaryCompact}>
+                    <Text style={styles.summaryText}>
+                        {t('reorderAssist.dateFrom')}: {history.from}
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        {t('reorderAssist.dateTo')}: {history.to}
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        {t('articles.title')}: {filteredRowsLength}/{reorderRowsLength}
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        {t('raw.rows')}: {history.debug?.matched_rows ?? 0}
+                    </Text>
+                </View>
+            ) : null}
+
+            <View style={styles.listFiltersSection}>
+                <View style={styles.listFilterGroup}>
+                    <Text style={styles.listFilterLabel}>{t('reorderAssist.filterArticleScopeTitle')}</Text>
+                    <View style={styles.statusRow}>
+                        <TouchableOpacity
+                            style={[styles.filterChip, webshopFilter === 'ALL' && styles.filterChipActive]}
+                            onPress={() => setWebshopFilter('ALL')}
+                        >
+                            <Text
+                                style={[
+                                    styles.filterChipText,
+                                    webshopFilter === 'ALL' && styles.filterChipTextActive,
+                                ]}
+                            >
+                                {t('allArticles')}
+                            </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[
+                                styles.filterChip,
+                                webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipActive,
+                            ]}
+                            onPress={() => setWebshopFilter('WEBSHOP_ONLY')}
+                        >
+                            <Text
+                                style={[
+                                    styles.filterChipText,
+                                    webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipTextActive,
+                                ]}
+                            >
+                                {t('webshopOnly')}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
+                <View style={styles.listFilterGroup}>
+                    <Text style={styles.listFilterLabel}>{t('reorderAssist.filterStatusTitle')}</Text>
+                    <View style={styles.statusRow}>
+                        {(['ALL', 'OK', 'WATCH', 'ORDER'] as const).map((value) => (
+                            <TouchableOpacity
+                                key={value}
+                                style={[styles.filterChip, statusFilter === value && styles.filterChipActive]}
+                                onPress={() => setStatusFilter(value)}
+                            >
+                                <Text
+                                    style={[
+                                        styles.filterChipText,
+                                        statusFilter === value && styles.filterChipTextActive,
+                                    ]}
+                                >
+                                    {getStatusFilterLabel(value, t)}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+
+                <View style={styles.listFilterGroup}>
+                    <Text style={styles.listFilterLabel}>{t('reorderAssist.filterSortTitle')}</Text>
+                    <View style={styles.sortRow}>
+                    <TouchableOpacity
+                        style={[styles.filterChip, sortBy === 'article' && styles.filterChipActive]}
+                        onPress={() => setSortBy('article')}
+                    >
+                        <Text style={[styles.filterChipText, sortBy === 'article' && styles.filterChipTextActive]}>
+                            {t('article')}
+                        </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.filterChip, sortBy === 'title' && styles.filterChipActive]}
+                        onPress={() => setSortBy('title')}
+                    >
+                        <Text style={[styles.filterChipText, sortBy === 'title' && styles.filterChipTextActive]}>
+                            {t('sortTitleLabel')}
+                        </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.filterChip, sortBy === 'supplier' && styles.filterChipActive]}
+                        onPress={() => setSortBy('supplier')}
+                    >
+                        <Text style={[styles.filterChipText, sortBy === 'supplier' && styles.filterChipTextActive]}>
+                            {t('supplier')}
+                        </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.filterChip, sortBy === 'roundedOrderQty' && styles.filterChipActive]}
+                        onPress={() => setSortBy('roundedOrderQty')}
+                    >
+                        <Text
+                            style={[
+                                styles.filterChipText,
+                                sortBy === 'roundedOrderQty' && styles.filterChipTextActive,
+                            ]}
+                        >
+                            {t('suggested')}
+                        </Text>
+                    </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </>
+    );
+});
+
 export default function ReorderScreen() {
-    const { t } = useTranslation();
+    const { t } = useI18n();
+    const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
 
     const [from, setFrom] = useState(() => {
         const today = new Date();
-        const oneYearAgo = new Date(today);
-        oneYearAgo.setFullYear(today.getFullYear() - 1);
-
-        const year = oneYearAgo.getFullYear();
-        const month = String(oneYearAgo.getMonth() + 1).padStart(2, '0');
-        const day = String(oneYearAgo.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        const oneMonthAgo = new Date(today);
+        oneMonthAgo.setDate(today.getDate() - 30);
+        return formatDateString(oneMonthAgo);
     });
 
     const [to, setTo] = useState(() => {
         const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        return formatDateString(today);
     });
+    const [showFromPicker, setShowFromPicker] = useState(false);
+    const [showToPicker, setShowToPicker] = useState(false);
 
     const [leadTimeDays, setLeadTimeDays] = useState('14');
     const [safetyDays, setSafetyDays] = useState('7');
     const [packSize, setPackSize] = useState('1');
+
+    const [minValidDays, setMinValidDays] = useState('0');
+    const [maxValidDays, setMaxValidDays] = useState('120');
+    const [maxBookingHeads, setMaxBookingHeads] = useState('6000');
+    const [maxDeliveryHeads, setMaxDeliveryHeads] = useState('60000');
+    const [leadTimeTimeoutMs, setLeadTimeTimeoutMs] = useState('800000');
+    const [showAdvancedLeadtime, setShowAdvancedLeadtime] = useState(false);
+    const helpContent = useMemo(
+        () => (helpTopic ? buildHelpContent(helpTopic, t) : null),
+        [helpTopic, t]
+    );
+
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState<'ALL' | 'OK' | 'WATCH' | 'ORDER'>('ALL');
     const [webshopFilter, setWebshopFilter] = useState<WebshopFilter>('ALL');
@@ -523,19 +1530,192 @@ export default function ReorderScreen() {
 
     const [loading, setLoading] = useState(false);
     const [loadingLeadTimes, setLoadingLeadTimes] = useState(false);
+    const [loadingStock, setLoadingStock] = useState(false);
+
     const [leadTimeProgress, setLeadTimeProgress] = useState<{ processed: number; total: number }>({
         processed: 0,
         total: 0,
     });
     const [error, setError] = useState<string | null>(null);
     const [history, setHistory] = useState<StockHistoryResponse | null>(null);
-    const [stock, setStock] = useState<StockBalanceResponse | null>(null);
+    const [stock, setStock] = useState<StockBalanceResponse | null>({ rows: [] });
+    const [resolvedStockArticles, setResolvedStockArticles] = useState<ResolvedArticleMap>({});
     const [articles, setArticles] = useState<ExtendedArticle[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [productSettings, setProductSettings] = useState<ProductSettingsMap>({});
     const [autoLeadTimes, setAutoLeadTimes] = useState<AutoLeadTimeMap>({});
+    const [loadingAutoLeadTimeArticles, setLoadingAutoLeadTimeArticles] = useState<LoadingArticleMap>({});
+    const [autoLeadTimeErrors, setAutoLeadTimeErrors] = useState<ErrorByArticleMap>({});
+    const [recentPurchases, setRecentPurchases] = useState<Record<string, RecentPurchaseItem[]>>({});
+    const [recentIncomingDeliveries, setRecentIncomingDeliveries] = useState<
+        Record<string, RecentIncomingDeliveryItem[]>
+    >({});
+    const [recentIncomingDebug, setRecentIncomingDebug] = useState<RecentIncomingDebugMap>({});
+    const [requestedIncomingHistory, setRequestedIncomingHistory] = useState<Record<string, true>>({});
+    const [completedHistoryArticles, setCompletedHistoryArticles] = useState<Record<string, true>>({});
+    const [loadingPurchaseHistory, setLoadingPurchaseHistory] = useState<Record<string, boolean>>({});
+    const [loadingIncomingHistory, setLoadingIncomingHistory] = useState<Record<string, boolean>>({});
+    const [settingsHydrated, setSettingsHydrated] = useState(false);
 
     const fetchRunRef = useRef(0);
+    const historyRef = useRef<StockHistoryResponse | null>(null);
+    const completedHistoryArticlesRef = useRef<Record<string, true>>({});
+    const inFlightHistoryArticlesRef = useRef<Record<string, true>>({});
+
+    useEffect(() => {
+        historyRef.current = history;
+    }, [history]);
+
+    useEffect(() => {
+        completedHistoryArticlesRef.current = completedHistoryArticles;
+    }, [completedHistoryArticles]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadPersistedSettings = async () => {
+            try {
+                const raw = await AsyncStorage.getItem(REORDER_ASSIST_SETTINGS_STORAGE_KEY);
+                if (!raw) return;
+
+                const parsed = JSON.parse(raw) as ReorderAssistPersistedSettings;
+                if (!parsed || typeof parsed !== 'object' || cancelled) return;
+
+                if (typeof parsed.from === 'string' && isValidDateString(parsed.from)) {
+                    setFrom(parsed.from);
+                }
+                if (typeof parsed.to === 'string' && isValidDateString(parsed.to)) {
+                    setTo(parsed.to);
+                }
+                if (typeof parsed.leadTimeDays === 'string') {
+                    setLeadTimeDays(parsed.leadTimeDays);
+                }
+                if (typeof parsed.safetyDays === 'string') {
+                    setSafetyDays(parsed.safetyDays);
+                }
+                if (typeof parsed.packSize === 'string') {
+                    setPackSize(parsed.packSize);
+                }
+                if (typeof parsed.minValidDays === 'string') {
+                    setMinValidDays(parsed.minValidDays);
+                }
+                if (typeof parsed.maxValidDays === 'string') {
+                    setMaxValidDays(parsed.maxValidDays);
+                }
+                if (typeof parsed.maxBookingHeads === 'string') {
+                    setMaxBookingHeads(parsed.maxBookingHeads);
+                }
+                if (typeof parsed.maxDeliveryHeads === 'string') {
+                    setMaxDeliveryHeads(parsed.maxDeliveryHeads);
+                }
+                if (typeof parsed.leadTimeTimeoutMs === 'string') {
+                    setLeadTimeTimeoutMs(parsed.leadTimeTimeoutMs);
+                }
+                if (typeof parsed.showAdvancedLeadtime === 'boolean') {
+                    setShowAdvancedLeadtime(parsed.showAdvancedLeadtime);
+                }
+                if (typeof parsed.search === 'string') {
+                    setSearch(parsed.search);
+                }
+                if (
+                    parsed.statusFilter === 'ALL' ||
+                    parsed.statusFilter === 'OK' ||
+                    parsed.statusFilter === 'WATCH' ||
+                    parsed.statusFilter === 'ORDER'
+                ) {
+                    setStatusFilter(parsed.statusFilter);
+                }
+                if (parsed.webshopFilter === 'ALL' || parsed.webshopFilter === 'WEBSHOP_ONLY') {
+                    setWebshopFilter(parsed.webshopFilter);
+                }
+                if (
+                    parsed.sortBy === 'article' ||
+                    parsed.sortBy === 'title' ||
+                    parsed.sortBy === 'supplier' ||
+                    parsed.sortBy === 'roundedOrderQty'
+                ) {
+                    setSortBy(parsed.sortBy);
+                }
+                if (parsed.productSettings && typeof parsed.productSettings === 'object') {
+                    setProductSettings(parsed.productSettings);
+                }
+            } catch (err) {
+                warn('[Persist] failed to load reorder settings', err);
+            } finally {
+                if (!cancelled) {
+                    setSettingsHydrated(true);
+                }
+            }
+        };
+
+        void loadPersistedSettings();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!settingsHydrated) return;
+
+        const payload: ReorderAssistPersistedSettings = {
+            from,
+            to,
+            leadTimeDays,
+            safetyDays,
+            packSize,
+            minValidDays,
+            maxValidDays,
+            maxBookingHeads,
+            maxDeliveryHeads,
+            leadTimeTimeoutMs,
+            showAdvancedLeadtime,
+            search,
+            statusFilter,
+            webshopFilter,
+            sortBy,
+            productSettings,
+        };
+
+        const timer = setTimeout(() => {
+            AsyncStorage.setItem(REORDER_ASSIST_SETTINGS_STORAGE_KEY, JSON.stringify(payload)).catch((err) => {
+                warn('[Persist] failed to save reorder settings', err);
+            });
+        }, 250);
+
+        return () => clearTimeout(timer);
+    }, [
+        settingsHydrated,
+        from,
+        to,
+        leadTimeDays,
+        safetyDays,
+        packSize,
+        minValidDays,
+        maxValidDays,
+        maxBookingHeads,
+        maxDeliveryHeads,
+        leadTimeTimeoutMs,
+        showAdvancedLeadtime,
+        search,
+        statusFilter,
+        webshopFilter,
+        sortBy,
+        productSettings,
+    ]);
+
+    const leadTimeFetchSettings = useMemo<LeadTimeFetchSettings>(() => {
+        const min = parseNonNegativeNumberWithFallback(minValidDays, 0);
+        const max = parseNonNegativeNumberWithFallback(maxValidDays, 120);
+
+        return {
+            minValidDays: min,
+            maxValidDays: max >= min ? max : min,
+            maxBookingHeads: parsePositiveNumberWithFallback(maxBookingHeads, 6000),
+            maxDeliveryHeads: parsePositiveNumberWithFallback(maxDeliveryHeads, 60000),
+            timeoutMs: parsePositiveNumberWithFallback(leadTimeTimeoutMs, 800000),
+        };
+    }, [minValidDays, maxValidDays, maxBookingHeads, maxDeliveryHeads, leadTimeTimeoutMs]);
 
     const reorderRows = useMemo(() => {
         if (!history?.rows?.length) return [];
@@ -555,8 +1735,7 @@ export default function ReorderScreen() {
             history.to,
             Number.isFinite(parsedLeadTime) && parsedLeadTime >= 0 ? parsedLeadTime : 14,
             Number.isFinite(parsedSafetyDays) && parsedSafetyDays >= 0 ? parsedSafetyDays : 7,
-            Number.isFinite(parsedPackSize) && parsedPackSize > 0 ? parsedPackSize : 1,
-            t('missingTitle')
+            Number.isFinite(parsedPackSize) && parsedPackSize > 0 ? parsedPackSize : 1
         );
     }, [
         history,
@@ -568,27 +1747,26 @@ export default function ReorderScreen() {
         leadTimeDays,
         safetyDays,
         packSize,
-        t,
     ]);
 
     const filteredRows = useMemo(() => {
-        const q = search.trim().toLowerCase();
+        const q = String(search ?? '').trim().toLowerCase();
 
-        const result = reorderRows.filter((row) => {
+        let result = reorderRows.filter((row) => {
             const matchesSearch =
-                !q ||
+                q.length === 0 ||
                 row.article.toLowerCase().includes(q) ||
                 row.title.toLowerCase().includes(q) ||
                 (row.supplier || '').toLowerCase().includes(q) ||
                 (row.supplierNumber || '').toLowerCase().includes(q);
 
-            const matchesStatus = statusFilter === 'ALL' || row.status === statusFilter;
-            const matchesWebshop = webshopFilter === 'ALL' || row.isWebshopArticle;
+            const matchesStatus = statusFilter === 'ALL' ? true : row.status === statusFilter;
+            const matchesWebshop = webshopFilter === 'ALL' ? true : row.isWebshopArticle === true;
 
             return matchesSearch && matchesStatus && matchesWebshop;
         });
 
-        result.sort((a, b) => {
+        result = [...result].sort((a, b) => {
             if (sortBy === 'article') {
                 return a.article.localeCompare(b.article, undefined, { numeric: true });
             }
@@ -614,6 +1792,257 @@ export default function ReorderScreen() {
         return result;
     }, [reorderRows, search, statusFilter, webshopFilter, sortBy]);
 
+    const fetchVisibleHistory = async (
+        articlesToFetch: string[],
+        dateFrom: string,
+        dateTo: string
+    ) => {
+        const unique = Array.from(
+            new Set(
+                articlesToFetch
+                    .map(normalizeArticleCode)
+                    .filter(Boolean)
+                    .filter((article) => !completedHistoryArticlesRef.current[article])
+                    .filter((article) => !inFlightHistoryArticlesRef.current[article])
+            )
+        );
+
+        if (!unique.length) {
+            log('[History] no new visible articles to fetch');
+            return;
+        }
+
+        for (const article of unique) {
+            inFlightHistoryArticlesRef.current[article] = true;
+        }
+
+        setLoadingPurchaseHistory((prev) => {
+            const next = { ...prev };
+            for (const article of unique) {
+                next[article] = true;
+            }
+            return next;
+        });
+
+        log('[History] queue fetch for articles', unique, 'purchase window', dateFrom, dateTo);
+
+        const runId = fetchRunRef.current;
+
+        try {
+            await fetchRecentOrderAndDeliveryHistoryForArticles(
+                unique,
+                dateFrom,
+                dateTo,
+                (article, items) => {
+                    if (fetchRunRef.current !== runId) return;
+
+                    log('[History] set purchases state', article, items);
+
+                    setRecentPurchases((prev) => ({
+                        ...prev,
+                        [article]: items,
+                    }));
+
+                    setLoadingPurchaseHistory((prev) => ({
+                        ...prev,
+                        [article]: false,
+                    }));
+                },
+                () => fetchRunRef.current !== runId
+            );
+
+            if (fetchRunRef.current !== runId) return;
+
+            setCompletedHistoryArticles((prev) => {
+                const next = { ...prev };
+                for (const article of unique) {
+                    next[article] = true;
+                }
+                completedHistoryArticlesRef.current = next;
+                return next;
+            });
+        } catch (err) {
+            warn('[Reorder] fetchVisibleHistory failed', err);
+        } finally {
+            for (const article of unique) {
+                delete inFlightHistoryArticlesRef.current[article];
+            }
+
+            if (fetchRunRef.current === runId) {
+                setLoadingPurchaseHistory((prev) => {
+                    const next = { ...prev };
+                    for (const article of unique) {
+                        next[article] = false;
+                    }
+                    return next;
+                });
+            }
+        }
+    };
+
+    const fetchMatchingDeliveryForArticle = async (
+        article: string,
+        bestnr: string,
+        orderDate?: string
+    ) => {
+        const normalizedArticle = normalizeArticleCode(article);
+        const normalizedBestnr = normalizeDocNo(bestnr);
+        const requestKey = getIncomingRequestKey(normalizedArticle, normalizedBestnr);
+        const normalizedOrderDate =
+            orderDate && isValidDateString(orderDate.trim()) ? orderDate.trim() : undefined;
+        const normalizedOrderToDate = normalizedOrderDate
+            ? formatDateShort(
+                addDays(new Date(`${normalizedOrderDate}T00:00:00`), MATCHING_DELIVERY_SEARCH_WINDOW_DAYS)
+            )
+            : undefined;
+        if (!normalizedArticle || !normalizedBestnr) return;
+
+        setRequestedIncomingHistory((prev) => ({
+            ...prev,
+            [requestKey]: true,
+        }));
+        setLoadingIncomingHistory((prev) => ({
+            ...prev,
+            [requestKey]: true,
+        }));
+        setRecentIncomingDebug((prev) => ({
+            ...prev,
+            [requestKey]: {},
+        }));
+
+        try {
+            const deliveryRes = await withTimeout(
+                fetchMatchingIncomingDeliveries({
+                    article: normalizedArticle,
+                    bestnr: normalizedBestnr,
+                    from_date: normalizedOrderDate,
+                    to_date: normalizedOrderToDate,
+                    max_heads: 10000,
+                    max_hits: 20,
+                }),
+                180000
+            );
+
+            const items = readRowsForArticle<RecentIncomingDeliveryItem>(deliveryRes, normalizedArticle);
+            setRecentIncomingDeliveries((prev) => ({
+                ...prev,
+                [requestKey]: items,
+            }));
+            setRecentIncomingDebug((prev) => ({
+                ...prev,
+                [requestKey]: {
+                    source: deliveryRes?.source,
+                    rowKeys: deliveryRes?.rows ? Object.keys(deliveryRes.rows) : [],
+                    debug: deliveryRes?.debug,
+                },
+            }));
+        } catch (deliveryErr) {
+            warn('[History] deliveries failed', normalizedArticle, deliveryErr);
+            setRecentIncomingDeliveries((prev) => ({
+                ...prev,
+                [requestKey]: [],
+            }));
+            setRecentIncomingDebug((prev) => ({
+                ...prev,
+                [requestKey]: {
+                    error:
+                        deliveryErr instanceof Error
+                            ? deliveryErr.message
+                            : String(deliveryErr ?? 'unknown delivery error'),
+                },
+            }));
+        } finally {
+            setLoadingIncomingHistory((prev) => ({
+                ...prev,
+                [requestKey]: false,
+            }));
+        }
+    };
+
+    const fetchAutoLeadTimeForArticle = async (article: string) => {
+        const normalizedArticle = normalizeArticleCode(article);
+        if (!normalizedArticle) return;
+
+        setLoadingAutoLeadTimeArticles((prev) => ({
+            ...prev,
+            [normalizedArticle]: true,
+        }));
+        setAutoLeadTimeErrors((prev) => {
+            const next = { ...prev };
+            delete next[normalizedArticle];
+            return next;
+        });
+
+        try {
+            const result = await withTimeout(
+                getArticleLeadtime(normalizedArticle, {
+                    min_valid_days: leadTimeFetchSettings.minValidDays,
+                    max_valid_days: leadTimeFetchSettings.maxValidDays,
+                    max_booking_heads: leadTimeFetchSettings.maxBookingHeads,
+                    max_delivery_heads: leadTimeFetchSettings.maxDeliveryHeads,
+                }),
+                leadTimeFetchSettings.timeoutMs
+            );
+
+            const suggested = result?.suggested_lead_time_days;
+            if (Number.isFinite(suggested) && suggested >= 0) {
+                setAutoLeadTimes((prev) => ({
+                    ...prev,
+                    [normalizedArticle]: suggested,
+                }));
+            } else {
+                setAutoLeadTimeErrors((prev) => ({
+                    ...prev,
+                    [normalizedArticle]: 'No suggested lead time returned',
+                }));
+            }
+        } catch (err) {
+            warn('[LeadTime] on-demand fetch failed', normalizedArticle, err);
+            setAutoLeadTimeErrors((prev) => ({
+                ...prev,
+                [normalizedArticle]:
+                    err instanceof Error ? err.message : String(err ?? 'Unknown lead time error'),
+            }));
+        } finally {
+            setLoadingAutoLeadTimeArticles((prev) => ({
+                ...prev,
+                [normalizedArticle]: false,
+            }));
+        }
+    };
+
+    useEffect(() => {
+        if (!history || !filteredRows.length) return;
+
+        const firstArticles = filteredRows.slice(0, 2).map((row) => row.article);
+        log('[History] initial effect fetch for first filtered rows', firstArticles);
+
+        void fetchVisibleHistory(firstArticles, history.from, history.to);
+    }, [history, filteredRows]);
+
+    const onViewableItemsChanged = useRef(
+        ({ viewableItems }: { viewableItems: Array<{ item?: AssistantRow | null }> }) => {
+            const visibleArticles = viewableItems
+                .map((entry) => entry.item?.article)
+                .filter((value): value is string => Boolean(value));
+
+            const currentHistory = historyRef.current;
+            if (!currentHistory || !visibleArticles.length) return;
+
+            log('[History] onViewableItemsChanged', visibleArticles);
+
+            void fetchVisibleHistory(
+                visibleArticles,
+                currentHistory.from,
+                currentHistory.to
+            );
+        }
+    ).current;
+
+    const viewabilityConfig = useRef({
+        itemVisiblePercentThreshold: 30,
+    }).current;
+
     const handleFetch = async () => {
         const runId = Date.now();
         fetchRunRef.current = runId;
@@ -622,7 +2051,7 @@ export default function ReorderScreen() {
             setError(null);
 
             if (!isValidDateString(from) || !isValidDateString(to)) {
-                setError(t('dateFormatError'));
+                setError(getFetchErrorMessage('date', t));
                 return;
             }
 
@@ -631,57 +2060,81 @@ export default function ReorderScreen() {
             const parsedPackSize = Number(packSize);
 
             if (!Number.isFinite(parsedLeadTime) || parsedLeadTime < 0) {
-                setError(t('leadTimeError'));
+                setError(getFetchErrorMessage('leadTime', t));
                 return;
             }
 
             if (!Number.isFinite(parsedSafetyDays) || parsedSafetyDays < 0) {
-                setError(t('safetyError'));
+                setError(getFetchErrorMessage('safety', t));
                 return;
             }
 
             if (!Number.isFinite(parsedPackSize) || parsedPackSize <= 0) {
-                setError(t('packSizeError'));
+                setError(getFetchErrorMessage('packSize', t));
+                return;
+            }
+
+            if (leadTimeFetchSettings.maxValidDays < leadTimeFetchSettings.minValidDays) {
+                setError(getFetchErrorMessage('leadTimeRange', t));
                 return;
             }
 
             const fromDate = new Date(`${from}T00:00:00`);
             const toDate = new Date(`${to}T00:00:00`);
             if (fromDate.getTime() > toDate.getTime()) {
-                setError(t('fromBeforeTo'));
+                setError(getFetchErrorMessage('fromBeforeTo', t));
                 return;
             }
 
+            log('[Fetch] starting handleFetch', {
+                from,
+                to,
+                leadTimeDays,
+                safetyDays,
+                packSize,
+                leadTimeFetchSettings,
+            });
+
             setLoading(true);
             setLoadingLeadTimes(false);
+            setLoadingStock(false);
             setLeadTimeProgress({ processed: 0, total: 0 });
             setHistory(null);
-            setStock(null);
+            setStock({ rows: [] });
+            setResolvedStockArticles({});
             setArticles([]);
             setSuppliers([]);
             setAutoLeadTimes({});
+            setLoadingAutoLeadTimeArticles({});
+            setAutoLeadTimeErrors({});
+            setRecentPurchases({});
+            setRecentIncomingDeliveries({});
+            setRecentIncomingDebug({});
+            setRequestedIncomingHistory({});
+            setCompletedHistoryArticles({});
+            setLoadingPurchaseHistory({});
+            setLoadingIncomingHistory({});
+            historyRef.current = null;
+            completedHistoryArticlesRef.current = {};
+            inFlightHistoryArticlesRef.current = {};
 
-            console.log('[Reorder] login start');
             await login('jens@aveo.se', 'jens2020!');
-            console.log('[Reorder] login done');
+            log('[Fetch] login ok');
 
-            console.log('[Reorder] stock history start');
-            const historyData = await fetchOrderAssistStockHistory({ from, to });
-            console.log('[Reorder] stock history done');
+            if (fetchRunRef.current !== runId) return;
 
-            console.log('[Reorder] visma articles start');
-            const articleData = await fetchVismaArticles();
-            console.log('[Reorder] visma articles done');
+            const historyData = await withTimeout(
+                fetchOrderAssistStockHistory({ from, to }),
+                300000
+            );
 
-            console.log('[Reorder] suppliers start');
-            const supplierData = await fetchSuppliers();
-            console.log('[Reorder] suppliers done');
+            log('[Fetch] historyData', historyData);
 
             if (fetchRunRef.current !== runId) return;
 
             setHistory(historyData ?? null);
-            setArticles(Array.isArray(articleData) ? (articleData as ExtendedArticle[]) : []);
-            setSuppliers(Array.isArray(supplierData) ? supplierData : []);
+            historyRef.current = historyData ?? null;
+            setLoading(false);
 
             const articleCodes = (historyData?.rows ?? [])
                 .map((row) => normalizeArticleCode(row.article))
@@ -689,61 +2142,158 @@ export default function ReorderScreen() {
 
             const uniqueArticles = Array.from(new Set(articleCodes));
 
+            log('[Fetch] uniqueArticles count', uniqueArticles.length);
+
             if (!uniqueArticles.length) {
                 setStock({ rows: [] });
-                setLoading(false);
                 return;
             }
 
-            console.log('[Reorder] stock balance start');
-            const stockData = await fetchStockBalance({
-                articles: uniqueArticles,
-                mode: 'onhand',
-            });
-            console.log('[Reorder] stock balance done');
-
-            if (fetchRunRef.current !== runId) return;
-
-            setStock(stockData ?? { rows: [] });
-
-            // Visa listan direkt när grunddatan är klar
-            setLoading(false);
-
-            // Hämta ledtider stegvis i bakgrunden
-            setLoadingLeadTimes(true);
-            setLeadTimeProgress({ processed: 0, total: uniqueArticles.length });
-
-            fetchAutoLeadTimesProgressively(
-                uniqueArticles,
-                (partial, processed, total) => {
+            const articlesPromise = fetchVismaArticles()
+                .then((data) => {
                     if (fetchRunRef.current !== runId) return;
+                    const articleRows = Array.isArray(data) ? (data as ExtendedArticle[]) : [];
+                    const articleWithWebshopField = articleRows.find((row) => {
+                        const root = row as any;
+                        const raw = root?.raw?.data;
+                        return (
+                            Object.prototype.hasOwnProperty.call(root, 'adk_article_webshop') ||
+                            Object.prototype.hasOwnProperty.call(raw ?? {}, 'adk_article_webshop')
+                        );
+                    });
+                    const firstArticle = articleRows[0] as any;
 
-                    setAutoLeadTimes((prev) => ({
-                        ...prev,
-                        ...partial,
-                    }));
-                    setLeadTimeProgress({ processed, total });
-                },
-                () => fetchRunRef.current !== runId
-            )
-                .catch((err) => {
-                    console.warn('[Reorder] leadtimes failed', err);
+                    log('[Fetch] vismaArticles loaded', articleRows.length);
+                    log('[Fetch] vismaArticles webshop debug', {
+                        firstArticleNumber:
+                            firstArticle?.adk_article_number ?? firstArticle?.ARARTN ?? null,
+                        firstArticleKeys: firstArticle ? Object.keys(firstArticle).slice(0, 40) : [],
+                        firstRawKeys: firstArticle?.raw?.data
+                            ? Object.keys(firstArticle.raw.data).slice(0, 40)
+                            : [],
+                        webshopFieldArticleNumber: articleWithWebshopField
+                            ? ((articleWithWebshopField as any)?.adk_article_number ??
+                                (articleWithWebshopField as any)?.ARARTN ??
+                                null)
+                            : null,
+                        webshopFieldValue: articleWithWebshopField
+                            ? ((articleWithWebshopField as any)?.adk_article_webshop ??
+                                (articleWithWebshopField as any)?.raw?.data?.adk_article_webshop ??
+                                null)
+                            : null,
+                        webshopFieldSample: articleWithWebshopField
+                            ? {
+                                article:
+                                    (articleWithWebshopField as any)?.adk_article_number ??
+                                    (articleWithWebshopField as any)?.ARARTN ??
+                                    null,
+                                adk_article_webshop:
+                                    (articleWithWebshopField as any)?.adk_article_webshop ?? null,
+                                raw_adk_article_webshop:
+                                    (articleWithWebshopField as any)?.raw?.data?.adk_article_webshop ?? null,
+                            }
+                            : null,
+                    });
+
+                    setArticles(articleRows);
                 })
-                .finally(() => {
-                    if (fetchRunRef.current !== runId) return;
-                    setLoadingLeadTimes(false);
+                .catch((err) => {
+                    warn('[Reorder] visma articles failed', err);
                 });
+
+            const suppliersPromise = fetchSuppliers()
+                .then((data) => {
+                    if (fetchRunRef.current !== runId) return;
+                    log('[Fetch] suppliers loaded', Array.isArray(data) ? data.length : data);
+                    setSuppliers(Array.isArray(data) ? data : []);
+                })
+                .catch((err) => {
+                    warn('[Reorder] suppliers failed', err);
+                });
+
+            setLoadingStock(true);
+            setResolvedStockArticles({});
+
+            const stockPromise = (async () => {
+                const INITIAL_STOCK_BATCH_SIZE = 40;
+                const STOCK_BATCH_SIZE = 200;
+
+                const initialBatch = uniqueArticles.slice(0, INITIAL_STOCK_BATCH_SIZE);
+                const remainingBatches = chunkArray(
+                    uniqueArticles.slice(INITIAL_STOCK_BATCH_SIZE),
+                    STOCK_BATCH_SIZE
+                );
+
+                const applyStockBatch = (batchArticles: string[], data: StockBalanceResponse | null | undefined) => {
+                    if (fetchRunRef.current !== runId) return;
+
+                    setStock((prev) => mergeStockBalanceResponses(prev, data));
+                    setResolvedStockArticles((prev) => {
+                        const next = { ...prev };
+                        for (const article of batchArticles) {
+                            next[article] = true;
+                        }
+                        return next;
+                    });
+                };
+
+                try {
+                    if (initialBatch.length) {
+                        try {
+                            const initialStock = await fetchStockBalance({
+                                articles: initialBatch,
+                                mode: 'onhand',
+                            });
+
+                            log('[Fetch] initial stock loaded', initialStock);
+                            applyStockBatch(initialBatch, initialStock);
+                        } catch (initialErr) {
+                            warn('[Reorder] initial stock batch failed', initialErr);
+                            applyStockBatch(initialBatch, { rows: [] });
+                        }
+                    }
+
+                    for (const batch of remainingBatches) {
+                        if (fetchRunRef.current !== runId) return;
+
+                        try {
+                            const batchStock = await fetchStockBalance({
+                                articles: batch,
+                                mode: 'onhand',
+                            });
+
+                            log('[Fetch] stock batch loaded', batch.length);
+                            applyStockBatch(batch, batchStock);
+                        } catch (batchErr) {
+                            warn('[Reorder] stock batch failed', batchErr);
+                            applyStockBatch(batch, { rows: [] });
+                        }
+
+                        if (fetchRunRef.current !== runId) return;
+                        await sleep(25);
+                    }
+                } catch (err) {
+                    warn('[Reorder] stock balance failed', err);
+                } finally {
+                    if (fetchRunRef.current !== runId) return;
+                    setLoadingStock(false);
+                }
+            })();
+
+            void Promise.allSettled([articlesPromise, suppliersPromise, stockPromise]);
         } catch (err: any) {
             if (fetchRunRef.current !== runId) return;
-            setError(err?.message || t('fetchError'));
+            warn('[Fetch] handleFetch failed', err);
+            setError(err?.message || getFetchErrorMessage('fetch', t));
             setLoadingLeadTimes(false);
+            setLoadingStock(false);
             setLoading(false);
         }
     };
 
     const updateProductSetting = (
         article: string,
-        field: 'leadTimeDays' | 'safetyDays',
+        field: 'leadTimeDays' | 'safetyDays' | 'packSize',
         rawValue: string
     ) => {
         const parsed = parseOptionalNumber(rawValue);
@@ -755,7 +2305,11 @@ export default function ReorderScreen() {
                 [field]: parsed,
             };
 
-            if (nextForArticle.leadTimeDays == null && nextForArticle.safetyDays == null) {
+            if (
+                nextForArticle.leadTimeDays == null &&
+                nextForArticle.safetyDays == null &&
+                nextForArticle.packSize == null
+            ) {
                 const copy = { ...prev };
                 delete copy[article];
                 return copy;
@@ -776,256 +2330,115 @@ export default function ReorderScreen() {
         });
     };
 
-    const renderHeader = () => (
-        <>
-            <Text style={styles.sortTitleLabel}>{t('reorderAssistant')}</Text>
-            <Text style={styles.meta}>
-                {t('environment')}: {APP_ENV}
-            </Text>
-            <Text style={styles.meta}>
-                {t('api')}: {API_ROOT}
-            </Text>
-
-            <View style={styles.filtersCompact}>
-                <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('from')}</Text>
-                        <TextInput
-                            value={from}
-                            onChangeText={setFrom}
-                            placeholder="YYYY-MM-DD"
-                            style={styles.inputCompact}
-                        />
-                    </View>
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('to')}</Text>
-                        <TextInput
-                            value={to}
-                            onChangeText={setTo}
-                            placeholder="YYYY-MM-DD"
-                            style={styles.inputCompact}
-                        />
-                    </View>
-                </View>
-
-                <View style={styles.row}>
-                    <View style={styles.fieldThird}>
-                        <Text style={styles.label}>{t('leadTimeDays')}</Text>
-                        <TextInput
-                            value={leadTimeDays}
-                            onChangeText={setLeadTimeDays}
-                            keyboardType="numeric"
-                            style={styles.inputCompact}
-                        />
-                    </View>
-                    <View style={styles.fieldThird}>
-                        <Text style={styles.label}>{t('safetyStockDays')}</Text>
-                        <TextInput
-                            value={safetyDays}
-                            onChangeText={setSafetyDays}
-                            keyboardType="numeric"
-                            style={styles.inputCompact}
-                        />
-                    </View>
-                    <View style={styles.fieldThird}>
-                        <Text style={styles.label}>{t('packSize')}</Text>
-                        <TextInput
-                            value={packSize}
-                            onChangeText={setPackSize}
-                            keyboardType="numeric"
-                            style={styles.inputCompact}
-                        />
-                    </View>
-                </View>
-
-                <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('search')}</Text>
-                        <TextInput
-                            value={search}
-                            onChangeText={setSearch}
-                            placeholder={t('searchPlaceholder')}
-                            style={styles.inputCompact}
-                        />
-                    </View>
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('sortBy')}</Text>
-                        <View style={styles.sortRow}>
-                            <TouchableOpacity
-                                style={[styles.filterChip, sortBy === 'article' && styles.filterChipActive]}
-                                onPress={() => setSortBy('article')}
-                            >
-                                <Text
-                                    style={[
-                                        styles.filterChipText,
-                                        sortBy === 'article' && styles.filterChipTextActive,
-                                    ]}
-                                >
-                                    {t('article')}
-                                </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={[styles.filterChip, sortBy === 'title' && styles.filterChipActive]}
-                                onPress={() => setSortBy('title')}
-                            >
-                                <Text
-                                    style={[
-                                        styles.filterChipText,
-                                        sortBy === 'title' && styles.filterChipTextActive,
-                                    ]}
-                                >
-                                    {t('title')}
-                                </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={[styles.filterChip, sortBy === 'supplier' && styles.filterChipActive]}
-                                onPress={() => setSortBy('supplier')}
-                            >
-                                <Text
-                                    style={[
-                                        styles.filterChipText,
-                                        sortBy === 'supplier' && styles.filterChipTextActive,
-                                    ]}
-                                >
-                                    {t('supplier')}
-                                </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={[
-                                    styles.filterChip,
-                                    sortBy === 'roundedOrderQty' && styles.filterChipActive,
-                                ]}
-                                onPress={() => setSortBy('roundedOrderQty')}
-                            >
-                                <Text
-                                    style={[
-                                        styles.filterChipText,
-                                        sortBy === 'roundedOrderQty' && styles.filterChipTextActive,
-                                    ]}
-                                >
-                                    {t('suggested')}
-                                </Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-
-                <View style={styles.statusRow}>
-                    {(['ALL', 'OK', 'WATCH', 'ORDER'] as const).map((value) => (
-                        <TouchableOpacity
-                            key={value}
-                            style={[styles.filterChip, statusFilter === value && styles.filterChipActive]}
-                            onPress={() => setStatusFilter(value)}
-                        >
-                            <Text
-                                style={[
-                                    styles.filterChipText,
-                                    statusFilter === value && styles.filterChipTextActive,
-                                ]}
-                            >
-                                {value}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-
-                <View style={styles.statusRow}>
-                    <TouchableOpacity
-                        style={[styles.filterChip, webshopFilter === 'ALL' && styles.filterChipActive]}
-                        onPress={() => setWebshopFilter('ALL')}
-                    >
-                        <Text
-                            style={[
-                                styles.filterChipText,
-                                webshopFilter === 'ALL' && styles.filterChipTextActive,
-                            ]}
-                        >
-                            {t('allArticles')}
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[
-                            styles.filterChip,
-                            webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipActive,
-                        ]}
-                        onPress={() => setWebshopFilter('WEBSHOP_ONLY')}
-                    >
-                        <Text
-                            style={[
-                                styles.filterChipText,
-                                webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipTextActive,
-                            ]}
-                        >
-                            {t('webshopOnly')}
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.actionRow}>
-                    <TouchableOpacity
-                        style={styles.buttonPrimary}
-                        onPress={handleFetch}
-                        disabled={loading}
-                    >
-                        <Text style={styles.buttonText}>
-                            {loading ? t('loading') : t('calculate')}
-                        </Text>
-                    </TouchableOpacity>
-
-                    {Platform.OS === 'web' && filteredRows.length > 0 ? (
-                        <TouchableOpacity
-                            style={styles.buttonSecondary}
-                            onPress={() => downloadCsv(`reorder-${from}-to-${to}.csv`, filteredRows)}
-                        >
-                            <Text style={styles.buttonSecondaryText}>{t('exportCsv')}</Text>
-                        </TouchableOpacity>
-                    ) : null}
-                </View>
-            </View>
-
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            {loading ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null}
-
-            {!loading && loadingLeadTimes ? (
-                <Text style={styles.infoText}>
-                    {t('fetchingLeadTimes')} {leadTimeProgress.processed}/{leadTimeProgress.total}
-                </Text>
-            ) : null}
-
-            {history && !loading ? (
-                <View style={styles.summaryCompact}>
-                    <Text style={styles.summaryText}>
-                        {t('period')}: {history.from} → {history.to}
-                    </Text>
-                    <Text style={styles.summaryText}>
-                        {t('articles')}: {filteredRows.length}/{reorderRows.length}
-                    </Text>
-                    <Text style={styles.summaryText}>
-                        {t('documents')}: {history.debug?.matched_docs ?? 0}
-                    </Text>
-                    <Text style={styles.summaryText}>
-                        {t('rows')}: {history.debug?.matched_rows ?? 0}
-                    </Text>
-                </View>
-            ) : null}
-        </>
-    );
+    const handleExportCsv = () => {
+        downloadCsv(`reorder-${from}-to-${to}.csv`, filteredRows);
+    };
 
     return (
         <ScreenContainer>
             <FlatList
                 data={filteredRows}
                 keyExtractor={(item) => item.article}
-                ListHeaderComponent={renderHeader}
+                ListHeaderComponent={
+                    <ReorderHeader
+                        t={t}
+                        onOpenHelp={setHelpTopic}
+                        isWeb={Platform.OS === 'web'}
+                        onOpenFromDatePicker={() => setShowFromPicker(true)}
+                        onOpenToDatePicker={() => setShowToPicker(true)}
+                        from={from}
+                        to={to}
+                        setFrom={setFrom}
+                        setTo={setTo}
+                        leadTimeDays={leadTimeDays}
+                        safetyDays={safetyDays}
+                        packSize={packSize}
+                        setLeadTimeDays={setLeadTimeDays}
+                        setSafetyDays={setSafetyDays}
+                        setPackSize={setPackSize}
+                        minValidDays={minValidDays}
+                        maxValidDays={maxValidDays}
+                        maxBookingHeads={maxBookingHeads}
+                        maxDeliveryHeads={maxDeliveryHeads}
+                        leadTimeTimeoutMs={leadTimeTimeoutMs}
+                        setMinValidDays={setMinValidDays}
+                        setMaxValidDays={setMaxValidDays}
+                        setMaxBookingHeads={setMaxBookingHeads}
+                        setMaxDeliveryHeads={setMaxDeliveryHeads}
+                        setLeadTimeTimeoutMs={setLeadTimeTimeoutMs}
+                        showAdvancedLeadtime={showAdvancedLeadtime}
+                        setShowAdvancedLeadtime={setShowAdvancedLeadtime}
+                        search={search}
+                        setSearch={setSearch}
+                        sortBy={sortBy}
+                        setSortBy={setSortBy}
+                        statusFilter={statusFilter}
+                        setStatusFilter={setStatusFilter}
+                        webshopFilter={webshopFilter}
+                        setWebshopFilter={setWebshopFilter}
+                        handleFetch={handleFetch}
+                        loading={loading}
+                        filteredRowsLength={filteredRows.length}
+                        reorderRowsLength={reorderRows.length}
+                        error={error}
+                        loadingLeadTimes={loadingLeadTimes}
+                        loadingStock={loadingStock}
+                        leadTimeProgress={leadTimeProgress}
+                        history={history}
+                        onExportCsv={handleExportCsv}
+                    />
+                }
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={viewabilityConfig}
+                initialNumToRender={4}
+                maxToRenderPerBatch={4}
+                windowSize={3}
+                removeClippedSubviews={Platform.OS !== 'web'}
                 ListEmptyComponent={
-                    !loading && history ? <Text style={styles.empty}>{t('noData')}</Text> : null
+                    !loading && history ? (
+                        <Text style={styles.empty}>
+                            {reorderRows.length > 0 ? t('common.noResults') : t('common.noData')}
+                        </Text>
+                    ) : null
                 }
                 renderItem={({ item }) => {
                     const custom = productSettings[item.article];
+                    const purchaseHistory = recentPurchases[item.article] || [];
+                    const isLoadingAutoLeadTime = loadingAutoLeadTimeArticles[item.article] === true;
+                    const autoLeadTimeError = autoLeadTimeErrors[item.article];
+                    const isLoadingPurchases = loadingPurchaseHistory[item.article] === true;
+                    const stockIsReady = resolvedStockArticles[item.article] === true;
+                    const purchaseRequestKeys = purchaseHistory
+                        .map((entry) => {
+                            const purchaseOrderNo = getPurchaseOrderKey(entry);
+                            return purchaseOrderNo
+                                ? getIncomingRequestKey(item.article, purchaseOrderNo)
+                                : '';
+                        })
+                        .filter(Boolean);
+                    const incomingHistory = purchaseRequestKeys.flatMap(
+                        (requestKey) => recentIncomingDeliveries[requestKey] || []
+                    );
+                    const incomingByBestnr = incomingHistory.reduce<Record<string, RecentIncomingDeliveryItem[]>>(
+                        (acc, entry) => {
+                            const keys = getIncomingDeliveryOrderKeys(entry);
+                            for (const key of keys) {
+                                if (!acc[key]) acc[key] = [];
+                                acc[key].push(entry);
+                            }
+                            return acc;
+                        },
+                        {}
+                    );
+
+                    for (const key of Object.keys(incomingByBestnr)) {
+                        incomingByBestnr[key].sort((a, b) => {
+                            const aDate = String(a.deliveryDate || '');
+                            const bDate = String(b.deliveryDate || '');
+                            if (aDate !== bDate) return bDate.localeCompare(aDate);
+                            return Number(b.rowNumber || 0) - Number(a.rowNumber || 0);
+                        });
+                    }
 
                     return (
                         <View style={styles.cardCompact}>
@@ -1043,94 +2456,132 @@ export default function ReorderScreen() {
                                     ) : null}
                                 </View>
 
-                                <Text
-                                    style={[
-                                        styles.badge,
-                                        item.status === 'ORDER'
-                                            ? styles.badgeHigh
-                                            : item.status === 'WATCH'
-                                                ? styles.badgeMedium
-                                                : styles.badgeLow,
-                                    ]}
-                                >
-                                    {item.status}
-                                </Text>
-                            </View>
-
-                            <View
-                                style={[
-                                    styles.decisionBox,
-                                    item.isPastLatestOrderDate
-                                        ? styles.decisionDanger
-                                        : item.daysUntilLatestOrder != null && item.daysUntilLatestOrder <= 3
-                                            ? styles.decisionWarning
-                                            : styles.decisionNeutral,
-                                ]}
-                            >
-                                <Text style={styles.decisionTitle}>{t('orderingDecision')}</Text>
-
-                                <Text style={styles.decisionText}>{getOrderDecisionText(item, t)}</Text>
-
-                                {item.estimatedOutOfStockDate ? (
-                                    <Text style={styles.decisionLine}>
-                                        {t('estimatedOutOfStock')}:{' '}
-                                        <Text style={styles.decisionStrong}>{item.estimatedOutOfStockDate}</Text>
-                                    </Text>
-                                ) : (
-                                    <Text style={styles.decisionLine}>
-                                        {t('estimatedOutOfStock')}:{' '}
-                                        <Text style={styles.decisionStrong}>{t('cannotCalculate')}</Text>
-                                    </Text>
-                                )}
-
-                                {item.latestOrderDate ? (
+                                {stockIsReady ? (
                                     <Text
                                         style={[
-                                            styles.decisionLine,
-                                            item.isPastLatestOrderDate && styles.decisionLineDanger,
+                                            styles.badge,
+                                            item.status === 'ORDER'
+                                                ? styles.badgeHigh
+                                                : item.status === 'WATCH'
+                                                    ? styles.badgeMedium
+                                                    : styles.badgeLow,
                                         ]}
                                     >
-                                        {t('orderBy')}:{' '}
-                                        <Text style={styles.decisionStrong}>{item.latestOrderDate}</Text>
+                                        {getRowStatusLabel(item.status, t)}
                                     </Text>
-                                ) : null}
-
-                                {item.daysUntilOutOfStock != null ? (
-                                    <Text style={styles.decisionLine}>
-                                        {t('stockLastsAboutDays')}:{' '}
-                                        <Text style={styles.decisionStrong}>{item.daysUntilOutOfStock}</Text>
+                                ) : (
+                                    <Text style={[styles.badge, styles.badgeLoading]}>
+                                        {t('reorderAssist.loadingStockShort')}
                                     </Text>
-                                ) : null}
-
-                                <Text style={styles.decisionLine}>
-                                    {t('suggestedOrder')}:{' '}
-                                    <Text style={styles.decisionStrong}>
-                                        {item.suggestedOrderQty} {item.unit || ''}
-                                    </Text>
-                                </Text>
-                                <Text style={styles.decisionLine}>
-                                    {t('roundedOrder')}:{' '}
-                                    <Text style={styles.decisionStrong}>
-                                        {item.roundedOrderQty} {item.unit || ''}
-                                    </Text>
-                                </Text>
+                                )}
                             </View>
+
+                            {stockIsReady ? (
+                                <View
+                                    style={[
+                                        styles.decisionBox,
+                                        item.isPastLatestOrderDate
+                                            ? styles.decisionDanger
+                                            : item.daysUntilLatestOrder != null && item.daysUntilLatestOrder <= 3
+                                        ? styles.decisionWarning
+                                                : styles.decisionNeutral,
+                                    ]}
+                                >
+                                    <View style={styles.titleWithHelpRow}>
+                                        <Text style={styles.decisionTitle}>{t('orderingDecision')}</Text>
+                                        <HelpIconButton onPress={() => setHelpTopic('decision')} />
+                                    </View>
+
+                                    <Text style={styles.decisionText}>{getOrderDecisionText(item, t)}</Text>
+
+                                    {item.estimatedOutOfStockDate ? (
+                                        <Text style={styles.decisionLine}>
+                                            {t('estimatedOutOfStock')}{' '}
+                                            <Text style={styles.decisionStrong}>{item.estimatedOutOfStockDate}</Text>
+                                        </Text>
+                                    ) : (
+                                        <Text style={styles.decisionLine}>
+                                            {t('estimatedOutOfStock')}{' '}
+                                            <Text style={styles.decisionStrong}>{t('cannotCalculate')}</Text>
+                                        </Text>
+                                    )}
+
+                                    {item.latestOrderDate ? (
+                                        <Text
+                                            style={[
+                                                styles.decisionLine,
+                                                item.isPastLatestOrderDate && styles.decisionLineDanger,
+                                            ]}
+                                        >
+                                            {t('orderBy')}{' '}
+                                            <Text style={styles.decisionStrong}>{item.latestOrderDate}</Text>
+                                        </Text>
+                                    ) : null}
+
+                                    {item.daysUntilOutOfStock != null ? (
+                                        <Text style={styles.decisionLine}>
+                                            {t('stockLastsAboutDays')}{' '}
+                                            <Text style={styles.decisionStrong}>{item.daysUntilOutOfStock}</Text>
+                                        </Text>
+                                    ) : null}
+
+                                    <Text style={styles.decisionLine}>
+                                        {t('suggestedOrder')}{' '}
+                                        <Text style={styles.decisionStrong}>
+                                            {item.suggestedOrderQty} {item.unit || ''}
+                                        </Text>
+                                    </Text>
+                                    <Text style={styles.decisionLine}>
+                                        {t('roundedOrder')}{' '}
+                                        <Text style={styles.decisionStrong}>
+                                            {item.roundedOrderQty} {item.unit || ''}
+                                        </Text>
+                                    </Text>
+                                </View>
+                            ) : (
+                                <View style={[styles.decisionBox, styles.decisionLoading]}>
+                                    <View style={styles.titleWithHelpRow}>
+                                        <Text style={styles.decisionTitle}>
+                                            {t('reorderAssist.loadingStockDecisionTitle')}
+                                        </Text>
+                                        <HelpIconButton onPress={() => setHelpTopic('decision')} />
+                                    </View>
+                                    <View style={styles.historyLoadingRow}>
+                                        <ActivityIndicator size="small" />
+                                        <Text style={styles.metricMuted}>
+                                            {t('reorderAssist.loadingStockDecision')}
+                                        </Text>
+                                    </View>
+                                </View>
+                            )}
 
                             <View style={styles.metricsRow}>
                                 <Text style={styles.metric}>
-                                    {t('onHand')}: {item.currentStockQty} {item.unit || ''}
+                                    {t('reorderAssist.stock')}{' '}
+                                    {stockIsReady
+                                        ? `${item.currentStockQty} ${item.unit || ''}`
+                                        : t('reorderAssist.loadingStockGlobal')}
                                 </Text>
                                 <Text style={styles.metric}>
-                                    {t('perDay')}: {item.avgPerDay} {item.unit || ''}
+                                    {t('reorderAssist.dailyUsage')}: {item.avgPerDay} {item.unit || ''}
                                 </Text>
                                 <Text style={styles.metric}>
-                                    {t('perWeek')}: {item.avgPerWeek} {item.unit || ''}
+                                    {t('reorderAssist.dailyUsage')} x 7: {item.avgPerWeek} {item.unit || ''}
+                                </Text>
+                                <Text style={styles.metric}>
+                                    {t('reorderAssist.monthlyUsage')}: {item.avgPerMonth} {item.unit || ''}
+                                </Text>
+                                <Text style={styles.metric}>
+                                    {t('reorderAssist.quarterlyUsage')}: {item.avgPerQuarter} {item.unit || ''}
+                                </Text>
+                                <Text style={styles.metric}>
+                                    {t('reorderAssist.yearlyUsage')}: {item.avgPerYear} {item.unit || ''}
                                 </Text>
                             </View>
 
                             <View style={styles.inlineEditorRow}>
                                 <View style={styles.inlineEditorField}>
-                                    <Text style={styles.labelSmall}>{t('leadTimeDays')}</Text>
+                                    <Text style={styles.labelSmall}>{t('reorderAssist.leadTime')}</Text>
                                     <TextInput
                                         value={custom?.leadTimeDays != null ? String(custom.leadTimeDays) : ''}
                                         onChangeText={(value) =>
@@ -1145,7 +2596,7 @@ export default function ReorderScreen() {
                                 </View>
 
                                 <View style={styles.inlineEditorField}>
-                                    <Text style={styles.labelSmall}>{t('safetyStockDays')}</Text>
+                                    <Text style={styles.labelSmall}>{t('reorderAssist.safetyDays')}</Text>
                                     <TextInput
                                         value={custom?.safetyDays != null ? String(custom.safetyDays) : ''}
                                         onChangeText={(value) =>
@@ -1157,17 +2608,30 @@ export default function ReorderScreen() {
                                     />
                                 </View>
 
+                                <View style={styles.inlineEditorField}>
+                                    <Text style={styles.labelSmall}>{t('raw.field.quantity')}</Text>
+                                    <TextInput
+                                        value={custom?.packSize != null ? String(custom.packSize) : ''}
+                                        onChangeText={(value) =>
+                                            updateProductSetting(item.article, 'packSize', value)
+                                        }
+                                        placeholder={String(Number(packSize) || 1)}
+                                        keyboardType="numeric"
+                                        style={styles.inputMini}
+                                    />
+                                </View>
+
                                 <TouchableOpacity
                                     style={styles.resetButton}
                                     onPress={() => clearProductSettings(item.article)}
                                 >
-                                    <Text style={styles.resetButtonText}>{t('reset')}</Text>
+                                    <Text style={styles.resetButtonText}>{t('common.clear')}</Text>
                                 </TouchableOpacity>
                             </View>
 
                             <View style={styles.metricsRow}>
                                 <Text style={styles.metric}>
-                                    {t('leadTime')}: {item.leadTimeDays} {t('days')}
+                                    {t('reorderAssist.leadTime')}: {item.leadTimeDays} {t('days')}
                                     {item.hasCustomLeadTime
                                         ? ` (${t('custom')})`
                                         : item.hasAutoLeadTime
@@ -1175,10 +2639,43 @@ export default function ReorderScreen() {
                                             : ''}
                                 </Text>
                                 <Text style={styles.metric}>
-                                    {t('safety')}: {item.safetyDays} {t('days')}
+                                    {t('reorderAssist.safetyDays')}: {item.safetyDays} {t('days')}
                                     {item.hasCustomSafetyDays ? ` (${t('custom')})` : ''}
                                 </Text>
+                                <Text style={styles.metric}>
+                                    {t('raw.field.quantity')}: {item.packSize}
+                                    {item.hasCustomPackSize ? ` (${t('custom')})` : ''}
+                                </Text>
                             </View>
+
+                            {!item.hasCustomLeadTime && !item.hasAutoLeadTime ? (
+                                isLoadingAutoLeadTime ? (
+                                    <View style={styles.historyLoadingRow}>
+                                        <ActivityIndicator size="small" />
+                                        <Text style={styles.metricMutedIndented}>
+                                            {t('fetchingLeadTimes')}
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <>
+                                        <TouchableOpacity
+                                            style={styles.inlineLoadButton}
+                                            onPress={() => void fetchAutoLeadTimeForArticle(item.article)}
+                                        >
+                                            <Text style={styles.inlineLoadButtonText}>
+                                                {autoLeadTimeError
+                                                    ? `${t('common.retry')} ${t('reorderAssist.leadTime').toLowerCase()}`
+                                                    : t('reorderAssist.fetchLeadTime')}
+                                            </Text>
+                                        </TouchableOpacity>
+                                        {autoLeadTimeError ? (
+                                            <Text style={styles.metricMutedIndented}>
+                                                {t('common.error')}: {autoLeadTimeError}
+                                            </Text>
+                                        ) : null}
+                                    </>
+                                )
+                            ) : null}
 
                             <View style={styles.metricsRow}>
                                 <Text style={styles.metricMuted}>
@@ -1191,11 +2688,201 @@ export default function ReorderScreen() {
                                     {t('targetLevel')}: {item.targetStockQty} {item.unit || ''}
                                 </Text>
                             </View>
+
+                            <View style={styles.historyBox}>
+                                <View style={styles.titleWithHelpRow}>
+                                    <Text style={styles.historyTitle}>
+                                        {t('reorderAssist.latestOrdersAndDeliveries')}
+                                    </Text>
+                                    <HelpIconButton onPress={() => setHelpTopic('history')} />
+                                </View>
+
+
+                                {isLoadingPurchases ? (
+                                    <View style={styles.historyLoadingRow}>
+                                        <ActivityIndicator size="small" />
+                                        <Text style={styles.metricMuted}>
+                                            {t('reorderAssist.loadingOrderAndDeliveryHistory')}
+                                        </Text>
+                                    </View>
+                                ) : purchaseHistory.length > 0 ? (
+                                    purchaseHistory.map((entry, index) => {
+                                        const purchaseOrderNo = getPurchaseOrderKey(entry);
+                                        const purchaseOrderDate =
+                                            (entry as any).orderDate || (entry as any).rowDate || undefined;
+                                        const incomingRequestKey = purchaseOrderNo
+                                            ? getIncomingRequestKey(item.article, purchaseOrderNo)
+                                            : '';
+                                        const rowIncomingDebug = incomingRequestKey
+                                            ? recentIncomingDebug[incomingRequestKey]
+                                            : undefined;
+                                        const rowHasRequestedIncoming = incomingRequestKey
+                                            ? requestedIncomingHistory[incomingRequestKey] === true
+                                            : false;
+                                        const rowIsLoadingIncoming = incomingRequestKey
+                                            ? loadingIncomingHistory[incomingRequestKey] === true
+                                            : false;
+
+                                        const matchedIncoming = purchaseOrderNo
+                                            ? incomingByBestnr[purchaseOrderNo] || []
+                                            : [];
+
+                                        return (
+                                            <View
+                                                key={`purchase-delivery-${item.article}-${index}`}
+                                                style={styles.orderDeliveryBlock}
+                                            >
+                                                <Text style={styles.metricMuted}>
+                                                    {index === 0 ? t('common.latest') : t('common.previous')}
+                                                    : {t('reorderAssist.orderNumberShort')} {purchaseOrderNo || '-'} {' | '}
+                                                    {(entry as any).orderDate || (entry as any).rowDate || '-'} {' | '}
+                                                    {t('reorderAssist.orderedShort')} {(entry as any).orderedQty ?? '-'} {entry.unit || item.unit || ''} {' | '}
+                                                    {t('reorderAssist.deliveredShort')} {(entry as any).deliveredQty ?? '-'} {entry.unit || item.unit || ''} {' | '}
+                                                    {t('reorderAssist.remainingShort')} {(entry as any).restQty ?? '-'} {entry.unit || item.unit || ''}
+                                                </Text>
+
+                                                {matchedIncoming.length > 0 ? (
+                                                    matchedIncoming.map((delivery, deliveryIndex) => (
+                                                        <Text
+                                                            key={`matched-delivery-${item.article}-${index}-${deliveryIndex}`}
+                                                            style={styles.metricMutedIndented}
+                                                        >
+                                                            {deliveryIndex === 0
+                                                                ? t('reorderAssist.matchingDelivery')
+                                                                : t('reorderAssist.additionalDelivery')}
+                                                            : {t('reorderAssist.deliveryDocumentShort')} {delivery.deliveryDocumentNumber || '-'} {' | '}
+                                                            {delivery.deliveryDate || '-'} {' | '}
+                                                            {t('reorderAssist.deliveredShort')} {delivery.deliveredQty ?? '-'} {delivery.unit || item.unit || ''} {' | '}
+                                                            {delivery.supplierName || delivery.supplierNumber || ''}
+                                                        </Text>
+                                                    ))
+                                                ) : purchaseOrderNo && rowIsLoadingIncoming ? (
+                                                    <View style={styles.historyLoadingRow}>
+                                                        <ActivityIndicator size="small" />
+                                                        <Text style={styles.metricMutedIndented}>
+                                                            {t('reorderAssist.loadingOrderAndDeliveryHistory')}
+                                                        </Text>
+                                                    </View>
+                                                ) : purchaseOrderNo && !rowHasRequestedIncoming ? (
+                                                    <TouchableOpacity
+                                                        style={styles.inlineLoadButton}
+                                                        onPress={() =>
+                                                            void fetchMatchingDeliveryForArticle(
+                                                                item.article,
+                                                                purchaseOrderNo,
+                                                                purchaseOrderDate
+                                                            )
+                                                        }
+                                                    >
+                                                        <Text style={styles.inlineLoadButtonText}>
+                                                            {t('columns.show')} {t('reorderAssist.matchingDelivery').toLowerCase()}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ) : purchaseOrderNo && rowIncomingDebug?.error ? (
+                                                    <TouchableOpacity
+                                                        style={styles.inlineLoadButton}
+                                                        onPress={() =>
+                                                            void fetchMatchingDeliveryForArticle(
+                                                                item.article,
+                                                                purchaseOrderNo,
+                                                                purchaseOrderDate
+                                                            )
+                                                        }
+                                                    >
+                                                        <Text style={styles.inlineLoadButtonText}>
+                                                            {t('common.retry')} {t('reorderAssist.matchingDelivery').toLowerCase()}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ) : purchaseOrderNo && rowHasRequestedIncoming ? (
+                                                    <Text style={styles.metricMutedIndented}>
+                                                        {t('reorderAssist.noMatchingIncomingForOrder')}
+                                                    </Text>
+                                                ) : (
+                                                    <View />
+                                                )}
+                                            </View>
+                                        );
+                                    })
+                                ) : (
+                                    <Text style={styles.metricMuted}>
+                                        {t('reorderAssist.noPurchaseHistoryFound')}
+                                    </Text>
+                                )}
+
+                            </View>
+
                         </View>
                     );
                 }}
                 contentContainerStyle={styles.listContent}
             />
+
+            <Modal
+                visible={helpContent != null}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setHelpTopic(null)}
+            >
+                <View style={styles.helpModalOverlay}>
+                    <View style={styles.helpModalCard}>
+                        <View style={styles.helpModalHeader}>
+                            <Text style={styles.helpModalTitle}>
+                                {helpContent?.title}
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.helpModalCloseButton}
+                                onPress={() => setHelpTopic(null)}
+                            >
+                                <Text style={styles.helpModalCloseButtonText}>{t('common.close')}</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView showsVerticalScrollIndicator>
+                            {helpContent?.sections.map((section, index) => (
+                                <View key={`${section.title}-${index}`} style={styles.helpSection}>
+                                    <Text style={styles.helpSectionTitle}>{section.title}</Text>
+                                    {section.lines.map((line, lineIndex) => (
+                                        <Text
+                                            key={`${section.title}-${lineIndex}`}
+                                            style={styles.helpSectionLine}
+                                        >
+                                            {'\u2022'} {line}
+                                        </Text>
+                                    ))}
+                                </View>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
+            {Platform.OS !== 'web' && showFromPicker ? (
+                <DateTimePicker
+                    value={parseDateString(from) || new Date()}
+                    mode="date"
+                    display="default"
+                    onChange={(_event, selectedDate) => {
+                        setShowFromPicker(false);
+                        if (selectedDate) {
+                            setFrom(formatDateString(selectedDate));
+                        }
+                    }}
+                />
+            ) : null}
+
+            {Platform.OS !== 'web' && showToPicker ? (
+                <DateTimePicker
+                    value={parseDateString(to) || new Date()}
+                    mode="date"
+                    display="default"
+                    onChange={(_event, selectedDate) => {
+                        setShowToPicker(false);
+                        if (selectedDate) {
+                            setTo(formatDateString(selectedDate));
+                        }
+                    }}
+                />
+            ) : null}
         </ScreenContainer>
     );
 }
@@ -1203,17 +2890,6 @@ export default function ReorderScreen() {
 const styles = StyleSheet.create({
     listContent: {
         paddingBottom: 32,
-    },
-    title: {
-        fontSize: 22,
-        fontWeight: '700',
-        marginBottom: 6,
-    },
-    meta: {
-        fontSize: 11,
-        color: '#666',
-        marginBottom: 2,
-        marginLeft: 10,
     },
     filtersCompact: {
         marginTop: 10,
@@ -1235,10 +2911,20 @@ const styles = StyleSheet.create({
     fieldThird: {
         flex: 1,
     },
+    labelRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 4,
+    },
     label: {
         fontSize: 12,
         fontWeight: '600',
         marginBottom: 4,
+    },
+    labelInline: {
+        fontSize: 12,
+        fontWeight: '600',
     },
     labelSmall: {
         fontSize: 11,
@@ -1255,6 +2941,17 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         fontSize: 13,
     },
+    inputCompactStepper: {
+        flex: 1,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        paddingHorizontal: 8,
+        paddingVertical: 8,
+        backgroundColor: '#fff',
+        fontSize: 13,
+        textAlign: 'center',
+    },
     inputMini: {
         borderWidth: 1,
         borderColor: '#ccc',
@@ -1267,13 +2964,12 @@ const styles = StyleSheet.create({
     sortRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 6,
+        gap: Platform.OS === 'web' ? 8 : 6,
     },
     statusRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 6,
-        marginBottom: 8,
+        gap: Platform.OS === 'web' ? 8 : 6,
     },
     filterChip: {
         paddingHorizontal: 8,
@@ -1298,6 +2994,7 @@ const styles = StyleSheet.create({
     actionRow: {
         flexDirection: 'row',
         gap: 8,
+        flexWrap: 'wrap',
     },
     buttonPrimary: {
         flex: 1,
@@ -1327,7 +3024,21 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 10,
+        marginLeft: 8,
         marginBottom: 10,
+    },
+    listFiltersSection: {
+        marginBottom: 10,
+        marginLeft: Platform.OS === 'web' ? 8 : 0,
+    },
+    listFilterGroup: {
+        marginBottom: Platform.OS === 'web' ? 12 : 8,
+    },
+    listFilterLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#444',
+        marginBottom: 6,
     },
     summaryText: {
         fontSize: 12,
@@ -1336,6 +3047,7 @@ const styles = StyleSheet.create({
     infoText: {
         fontSize: 12,
         color: '#666',
+        marginLeft: 8,
         marginBottom: 10,
     },
     error: {
@@ -1373,6 +3085,21 @@ const styles = StyleSheet.create({
         color: '#666',
         marginTop: 2,
     },
+    helpIconButton: {
+        width: 18,
+        height: 18,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#1976d2',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#eef5ff',
+    },
+    helpIconText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#1976d2',
+    },
     webshopText: {
         fontSize: 11,
         color: '#1976d2',
@@ -1397,10 +3124,19 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffebee',
         borderColor: '#e49ca7',
     },
+    decisionLoading: {
+        backgroundColor: '#fafafa',
+        borderColor: '#d6d6d6',
+    },
+    titleWithHelpRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 6,
+    },
     decisionTitle: {
         fontSize: 13,
         fontWeight: '700',
-        marginBottom: 6,
         color: '#111',
     },
     decisionText: {
@@ -1433,9 +3169,11 @@ const styles = StyleSheet.create({
         gap: 8,
         marginTop: 6,
         marginBottom: 6,
+        flexWrap: 'wrap',
     },
     inlineEditorField: {
         flex: 1,
+        minWidth: 90,
     },
     resetButton: {
         paddingHorizontal: 10,
@@ -1450,6 +3188,22 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#444',
     },
+    inlineLoadButton: {
+        alignSelf: 'flex-start',
+        marginTop: 4,
+        marginLeft: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderWidth: 1,
+        borderColor: '#1976d2',
+        borderRadius: 6,
+        backgroundColor: '#fff',
+    },
+    inlineLoadButtonText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#1976d2',
+    },
     metric: {
         fontSize: 12,
         color: '#333',
@@ -1458,6 +3212,12 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#666',
     },
+    metricMutedIndented: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
+        marginLeft: 12,
+    },
     badge: {
         paddingHorizontal: 8,
         paddingVertical: 4,
@@ -1465,23 +3225,160 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         fontSize: 11,
         fontWeight: '700',
+        color: '#fff',
     },
     badgeLow: {
-        backgroundColor: '#e8f5e9',
-        color: '#1b5e20',
+        backgroundColor: '#2e7d32',
     },
     badgeMedium: {
-        backgroundColor: '#fff8e1',
-        color: '#e65100',
+        backgroundColor: '#ef6c00',
     },
     badgeHigh: {
-        backgroundColor: '#ffebee',
-        color: '#b71c1c',
+        backgroundColor: '#c62828',
+    },
+    badgeLoading: {
+        backgroundColor: '#546e7a',
     },
     sortTitleLabel: {
         fontSize: 22,
         fontWeight: '700',
         marginBottom: 6,
         marginLeft: 10,
+    },
+    advancedToggle: {
+        marginBottom: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        backgroundColor: '#fafafa',
+    },
+    advancedToggleText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#333',
+    },
+    advancedBox: {
+        marginBottom: 8,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        borderRadius: 6,
+        backgroundColor: '#fafafa',
+    },
+    advancedHint: {
+        fontSize: 11,
+        color: '#666',
+        marginTop: 4,
+    },
+    datePickerButton: {
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 11,
+        backgroundColor: '#fff',
+    },
+    datePickerButtonText: {
+        fontSize: 13,
+        color: '#222',
+    },
+    stepperRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    stepperButton: {
+        width: 34,
+        height: 34,
+        borderWidth: 1,
+        borderColor: '#1976d2',
+        borderRadius: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#fff',
+    },
+    stepperButtonText: {
+        fontSize: 18,
+        lineHeight: 20,
+        fontWeight: '700',
+        color: '#1976d2',
+    },
+    historyBox: {
+        marginTop: 8,
+        marginBottom: 6,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        borderRadius: 6,
+        backgroundColor: '#fafafa',
+    },
+    historyTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#333',
+    },
+    helpModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        justifyContent: 'center',
+        padding: 16,
+    },
+    helpModalCard: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        padding: 16,
+        maxHeight: '82%',
+    },
+    helpModalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        marginBottom: 12,
+    },
+    helpModalTitle: {
+        flex: 1,
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#111',
+    },
+    helpModalCloseButton: {
+        borderWidth: 1,
+        borderColor: '#1976d2',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        backgroundColor: '#fff',
+    },
+    helpModalCloseButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1976d2',
+    },
+    helpSection: {
+        marginBottom: 14,
+    },
+    helpSectionTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#111',
+        marginBottom: 6,
+    },
+    helpSectionLine: {
+        fontSize: 12,
+        color: '#333',
+        lineHeight: 18,
+        marginBottom: 6,
+    },
+    historyLoadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    orderDeliveryBlock: {
+        marginTop: 4,
+        marginBottom: 6,
     },
 });

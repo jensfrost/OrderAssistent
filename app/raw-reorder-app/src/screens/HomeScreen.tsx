@@ -34,6 +34,15 @@ export function HomeScreen({ navigation }: HomeProps) {
                     />
                 </View>
             )}
+
+            {can('users:manage') && (
+                <View style={styles.buttonContainer}>
+                    <Button
+                        title={t('mainMenu.users') || 'Användare'}
+                        onPress={() => navigation.navigate('Users')}
+                    />
+                </View>
+            )}
         </ScrollView>
     );
 }

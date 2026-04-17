@@ -9,6 +9,10 @@
     "android": "cross-env EXPO_PUBLIC_ENV=dev expo start --android --port 8083",
     "android:dev": "cross-env EXPO_PUBLIC_ENV=dev expo start --android -c --port 8083",
     "android:preview": "cross-env EXPO_PUBLIC_ENV=preview expo start --android -c --port 8084",
+    "android:dev:release": "cross-env EXPO_PUBLIC_ENV=dev cmd /c \"cd android && gradlew.bat assembleDevRelease\"",
+    "android:preview:release": "cross-env EXPO_PUBLIC_ENV=preview cmd /c \"cd android && gradlew.bat assemblePreviewRelease\"",
+    "android:dev:clean:local": "cross-env EXPO_PUBLIC_ENV=dev cmd /c \"cd android && gradlew.bat clean assembleRelease\"",
+    "android:preview:clean:local": "cross-env EXPO_PUBLIC_ENV=preview cmd /c \"cd android && gradlew.bat clean assembleRelease\"",
     "ios": "cross-env EXPO_PUBLIC_ENV=dev expo start --ios --port 8083",
     "ios:dev": "cross-env EXPO_PUBLIC_ENV=dev expo start --ios -c --port 8083",
     "ios:preview": "cross-env EXPO_PUBLIC_ENV=preview expo start --ios -c --port 8084",
@@ -17,11 +21,15 @@
     "web:preview": "cross-env EXPO_PUBLIC_ENV=preview expo start --web -c --port 8084"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "8.6.0",
+    "@react-native-picker/picker": "2.11.4",
     "@react-navigation/native": "^7.2.0",
     "@react-navigation/native-stack": "^7.14.7",
     "axios": "^1.14.0",
     "dotenv": "^16.4.7",
     "expo": "~55.0.8",
+    "expo-localization": "~55.0.9",
     "expo-status-bar": "~55.0.4",
     "i18n": "^0.15.3",
     "react": "19.2.0",
@@ -29,10 +37,13 @@
     "react-i18next": "^16.6.6",
     "react-native": "0.83.2",
     "react-native-gesture-handler": "~2.30.0",
+    "react-native-qrcode-svg": "^6.3.21",
     "react-native-reanimated": "4.2.1",
     "react-native-safe-area-context": "~5.6.2",
     "react-native-screens": "~4.23.0",
-    "react-native-web": "^0.21.0"
+    "react-native-svg": "^15.15.4",
+    "react-native-web": "^0.21.0",
+    "react-native-worklets": "^0.7.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

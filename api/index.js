@@ -70,14 +70,17 @@ const vismaStockHistory = require('./routes/vismaStockHistory');
 const vismaStockBalance = require('./routes/vismaStockBalance');
 
 const orderAssistStockHistoryRouter = require('./routes/orderAssistStockHistory');
+const incomingDeliveryNotesRouter = require('./routes/incomingDeliveryNotes');
 
 const suppliersRouter = require('./routes/suppliers');
+
+const installAppRouter = require('./routes/installApp');
 
 const app = express();
 console.log('[BOOT] starting API index.js, pid=', process.pid);
 
 /* Använd PORT från env per instans (sätt 3000 för preview, 3001 för dev i PM2) */
-const PORT = process.env.PORT || (ENV === 'preview' ? 3000 : 3001);
+const PORT = process.env.PORT || (ENV === 'preview' ? 3002 : 3003);
 
 app.disable('x-powered-by');
 
@@ -148,15 +151,18 @@ app.use('/api/batchLines', batchLinesRouter);
 app.use('/api/authReg',    authRouter);
 app.use('/api/admin', adminRouter);
 
+app.use('/api/install', installAppRouter);
 app.use('/api/vismaArticles', vismaArticlesRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/leadtime', leadtimeRouter);
 app.use('/api/rawReorderAssist', rawReorderAssistRouter);
 app.use('/api/orderAssist', orderAssistRouter);
 app.use('/api/order_assist_stock_history', orderAssistStockHistoryRouter);
+app.use('/api/incoming_delivery_notes', incomingDeliveryNotesRouter);
 
 // 🆕 incoming-cache på /api/incoming/...
 app.use('/api/incoming', incomingCacheRouter);
+
 
 // 🖨️ Bygg & montera skrivarrouten
 const printRouter = buildPrintRouter();

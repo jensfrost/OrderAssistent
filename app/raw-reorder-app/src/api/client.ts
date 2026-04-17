@@ -64,3 +64,24 @@ export function apiPut<T>(path: string, body?: unknown) {
 export function apiDelete<T>(path: string) {
   return request<T>(path, { method: 'DELETE' });
 }
+
+export async function getJson<T>(path: string): Promise<T> {
+  const url = buildApiUrl(path);
+  console.log('[getJson] path =', path);
+  console.log('[getJson] url =', url);
+  const response = await fetch(buildApiUrl(path), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`API ${response.status}: ${text || response.statusText}`);
+  }
+
+  return response.json();
+}
