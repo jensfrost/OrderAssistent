@@ -1,4 +1,4 @@
-// screens/InstallAppScreen.tsx
+﻿// screens/InstallAppScreen.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     View,
@@ -156,8 +156,6 @@ export default function InstallAppScreen() {
     const fallbackPlayUrl = useMemo(() => {
         return installConfig.playUrl?.trim() || '';
     }, [installConfig]);
-
-    const onAndroid = Platform.OS === 'android' || isAndroidUAWeb();
     const oniOS = Platform.OS === 'ios' || isIOSUAWeb();
 
     useEffect(() => {
@@ -238,21 +236,6 @@ export default function InstallAppScreen() {
         };
     }, [m, fallbackApkUrl, fallbackPlayUrl]);
 
-    const handleAndroidPress = () => {
-        if (playUrl) {
-            Linking.openURL(playUrl);
-            return;
-        }
-
-        if (!apkUrl) return;
-
-        if (Platform.OS === 'web') {
-            forceDownloadWeb(apkUrl, apkFileName);
-        } else {
-            Linking.openURL(apkUrl);
-        }
-    };
-
     const Heading = () => <Text style={styles.title}>{t('installApp.title')}</Text>;
 
     return (
@@ -265,8 +248,8 @@ export default function InstallAppScreen() {
                         version: m.versionName,
                         code: m.versionCode ?? 0,
                     })
-                    : 'Ingen versionsinformation tillgänglig'}{' '}
-                • ENV: {env}
+                    : 'Ingen versionsinformation tillgÃ¤nglig'}{' '}
+                â€¢ ENV: {env}
             </Text>
 
             {!!warning && (
@@ -278,34 +261,21 @@ export default function InstallAppScreen() {
             <View style={styles.grid}>
                 <View style={styles.card}>
                     <Text style={styles.cardTitle}>{t('installApp.androidTitle')}</Text>
-
-                    {onAndroid ? (
-                        playUrl || apkUrl ? (
-                            <TouchableOpacity style={styles.btn} onPress={handleAndroidPress}>
-                                <Text style={styles.btnText}>
-                                    {playUrl ? t('installApp.openPlay') : t('installApp.downloadApk')}
-                                </Text>
-                            </TouchableOpacity>
-                        ) : (
-                            <Text style={styles.text}>Ingen Android-installation är tillgänglig just nu.</Text>
-                        )
-                    ) : (
-                        <View style={styles.row}>
-                            <View style={styles.qrBox}>
-                                <QRCode value={playUrl || apkUrl || expoUrl} size={164} />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.text}>{t('installApp.scanAndroid')}</Text>
-                                <Text style={styles.muted} selectable>
-                                    {t('installApp.directLink')} {playUrl || apkUrl || expoUrl}
-                                </Text>
-                            </View>
+                    <View style={styles.row}>
+                        <View style={styles.qrBox}>
+                            <QRCode value={playUrl || apkUrl || expoUrl} size={164} />
                         </View>
-                    )}
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.text}>{t('installApp.scanAndroid')}</Text>
+                            <Text style={styles.muted} selectable>
+                                {t('installApp.directLink')} {playUrl || apkUrl || expoUrl}
+                            </Text>
+                        </View>
+                    </View>
 
                     <View style={{ marginTop: 12 }}>
-                        <Text style={styles.muted}>• {t('installApp.tip1')}</Text>
-                        <Text style={styles.muted}>• {t('installApp.tip2')}</Text>
+                        <Text style={styles.muted}>â€¢ {t('installApp.tip1')}</Text>
+                        <Text style={styles.muted}>â€¢ {t('installApp.tip2')}</Text>
                     </View>
 
                     {!!m?.notes && (
@@ -403,3 +373,7 @@ const styles = StyleSheet.create({
         marginTop: 12,
     },
 });
+
+
+
+
