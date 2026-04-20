@@ -248,8 +248,8 @@ export default function InstallAppScreen() {
                         version: m.versionName,
                         code: m.versionCode ?? 0,
                     })
-                    : 'Ingen versionsinformation tillgÃ¤nglig'}{' '}
-                â€¢ ENV: {env}
+                    : 'Ingen versionsinformation tillgänglig'}{' '}
+                • ENV: {env}
             </Text>
 
             {!!warning && (
@@ -274,8 +274,8 @@ export default function InstallAppScreen() {
                     </View>
 
                     <View style={{ marginTop: 12 }}>
-                        <Text style={styles.muted}>â€¢ {t('installApp.tip1')}</Text>
-                        <Text style={styles.muted}>â€¢ {t('installApp.tip2')}</Text>
+                        <Text style={styles.muted}>{t('installApp.tip1')}</Text>
+                        <Text style={styles.muted}>{t('installApp.tip2')}</Text>
                     </View>
 
                     {!!m?.notes && (
