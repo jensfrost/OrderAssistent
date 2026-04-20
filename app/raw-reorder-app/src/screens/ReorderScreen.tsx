@@ -63,6 +63,7 @@ type ProductSettingsMap = Record<
 
 type AutoLeadTimeMap = Record<string, number>;
 type WebshopFilter = 'ALL' | 'WEBSHOP_ONLY';
+type StatusFilterValue = 'OK' | 'WATCH' | 'ORDER';
 type ResolvedArticleMap = Record<string, true>;
 type LoadingArticleMap = Record<string, boolean>;
 type ErrorByArticleMap = Record<string, string>;
@@ -101,7 +102,7 @@ type AssistantRow = {
     currentStockQty: number;
     suggestedOrderQty: number;
     roundedOrderQty: number;
-    status: 'OK' | 'WATCH' | 'ORDER';
+    status: StatusFilterValue;
     daysUntilOutOfStock: number | null;
     estimatedOutOfStockDate: string | null;
     latestOrderDate: string | null;
@@ -136,7 +137,7 @@ type ReorderAssistPersistedSettings = {
     leadTimeTimeoutMs?: string;
     showAdvancedLeadtime?: boolean;
     search?: string;
-    statusFilter?: 'ALL' | 'OK' | 'WATCH' | 'ORDER';
+    statusFilter?: 'ALL' | StatusFilterValue | StatusFilterValue[];
     webshopFilter?: WebshopFilter;
     sortBy?: SortBy;
     productSettings?: ProductSettingsMap;
@@ -865,10 +866,9 @@ async function fetchRecentOrderAndDeliveryHistoryForArticles(
     }
 }
 
-function getStatusFilterLabel(
-    value: 'ALL' | 'OK' | 'WATCH' | 'ORDER',
-    t: (key: string, options?: any) => string
-) {
+const STATUS_FILTER_VALUES: StatusFilterValue[] = ['OK', 'WATCH', 'ORDER'];
+
+function getStatusFilterLabel(value: 'ALL' | StatusFilterValue, t: (key: string, options?: any) => string) {
     switch (value) {
         case 'ALL':
             return t('common.all');
@@ -968,8 +968,8 @@ type ReorderHeaderProps = {
     sortBy: SortBy;
     setSortBy: (value: SortBy) => void;
 
-    statusFilter: 'ALL' | 'OK' | 'WATCH' | 'ORDER';
-    setStatusFilter: (value: 'ALL' | 'OK' | 'WATCH' | 'ORDER') => void;
+    statusFilter: StatusFilterValue[];
+    setStatusFilter: React.Dispatch<React.SetStateAction<StatusFilterValue[]>>;
 
     webshopFilter: WebshopFilter;
     setWebshopFilter: (value: WebshopFilter) => void;
@@ -1421,16 +1421,38 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                 <View style={styles.listFilterGroup}>
                     <Text style={styles.listFilterLabel}>{t('reorderAssist.filterStatusTitle')}</Text>
                     <View style={styles.statusRow}>
-                        {(['ALL', 'OK', 'WATCH', 'ORDER'] as const).map((value) => (
+                        {(['ALL', ...STATUS_FILTER_VALUES] as const).map((value) => (
                             <TouchableOpacity
                                 key={value}
-                                style={[styles.filterChip, statusFilter === value && styles.filterChipActive]}
-                                onPress={() => setStatusFilter(value)}
+                                style={[
+                                    styles.filterChip,
+                                    (
+                                        value === 'ALL'
+                                            ? statusFilter.length === 0
+                                            : statusFilter.includes(value)
+                                    ) && styles.filterChipActive,
+                                ]}
+                                onPress={() => {
+                                    setStatusFilter((prev) => {
+                                        if (value === 'ALL') return [];
+
+                                        if (prev.includes(value)) {
+                                            const next = prev.filter((item) => item !== value);
+                                            return next;
+                                        }
+
+                                        return [...prev, value];
+                                    });
+                                }}
                             >
                                 <Text
                                     style={[
                                         styles.filterChipText,
-                                        statusFilter === value && styles.filterChipTextActive,
+                                        (
+                                            value === 'ALL'
+                                                ? statusFilter.length === 0
+                                                : statusFilter.includes(value)
+                                        ) && styles.filterChipTextActive,
                                     ]}
                                 >
                                     {getStatusFilterLabel(value, t)}
@@ -1524,13 +1546,15 @@ export default function ReorderScreen() {
     );
 
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'ALL' | 'OK' | 'WATCH' | 'ORDER'>('ALL');
+    const [statusFilter, setStatusFilter] = useState<StatusFilterValue[]>([]);
     const [webshopFilter, setWebshopFilter] = useState<WebshopFilter>('ALL');
     const [sortBy, setSortBy] = useState<SortBy>('article');
 
     const [loading, setLoading] = useState(false);
     const [loadingLeadTimes, setLoadingLeadTimes] = useState(false);
     const [loadingStock, setLoadingStock] = useState(false);
+    const [loadingArticles, setLoadingArticles] = useState(false);
+    const [loadingSuppliers, setLoadingSuppliers] = useState(false);
 
     const [leadTimeProgress, setLeadTimeProgress] = useState<{ processed: number; total: number }>({
         processed: 0,
@@ -1617,13 +1641,20 @@ export default function ReorderScreen() {
                 if (typeof parsed.search === 'string') {
                     setSearch(parsed.search);
                 }
-                if (
-                    parsed.statusFilter === 'ALL' ||
+                if (parsed.statusFilter === 'ALL') {
+                    setStatusFilter([]);
+                } else if (
                     parsed.statusFilter === 'OK' ||
                     parsed.statusFilter === 'WATCH' ||
                     parsed.statusFilter === 'ORDER'
                 ) {
-                    setStatusFilter(parsed.statusFilter);
+                    setStatusFilter([parsed.statusFilter]);
+                } else if (Array.isArray(parsed.statusFilter)) {
+                    const next = parsed.statusFilter.filter(
+                        (value): value is StatusFilterValue =>
+                            value === 'OK' || value === 'WATCH' || value === 'ORDER'
+                    );
+                    setStatusFilter(next);
                 }
                 if (parsed.webshopFilter === 'ALL' || parsed.webshopFilter === 'WEBSHOP_ONLY') {
                     setWebshopFilter(parsed.webshopFilter);
@@ -1671,7 +1702,7 @@ export default function ReorderScreen() {
             leadTimeTimeoutMs,
             showAdvancedLeadtime,
             search,
-            statusFilter,
+            statusFilter: statusFilter.length === 0 ? 'ALL' : statusFilter,
             webshopFilter,
             sortBy,
             productSettings,
@@ -1760,7 +1791,7 @@ export default function ReorderScreen() {
                 (row.supplier || '').toLowerCase().includes(q) ||
                 (row.supplierNumber || '').toLowerCase().includes(q);
 
-            const matchesStatus = statusFilter === 'ALL' ? true : row.status === statusFilter;
+            const matchesStatus = statusFilter.length === 0 ? true : statusFilter.includes(row.status);
             const matchesWebshop = webshopFilter === 'ALL' ? true : row.isWebshopArticle === true;
 
             return matchesSearch && matchesStatus && matchesWebshop;
@@ -2098,6 +2129,8 @@ export default function ReorderScreen() {
             setLoading(true);
             setLoadingLeadTimes(false);
             setLoadingStock(false);
+            setLoadingArticles(false);
+            setLoadingSuppliers(false);
             setLeadTimeProgress({ processed: 0, total: 0 });
             setHistory(null);
             setStock({ rows: [] });
@@ -2146,9 +2179,12 @@ export default function ReorderScreen() {
 
             if (!uniqueArticles.length) {
                 setStock({ rows: [] });
+                setLoadingArticles(false);
+                setLoadingSuppliers(false);
                 return;
             }
 
+            setLoadingArticles(true);
             const articlesPromise = fetchVismaArticles()
                 .then((data) => {
                     if (fetchRunRef.current !== runId) return;
@@ -2199,8 +2235,13 @@ export default function ReorderScreen() {
                 })
                 .catch((err) => {
                     warn('[Reorder] visma articles failed', err);
+                })
+                .finally(() => {
+                    if (fetchRunRef.current !== runId) return;
+                    setLoadingArticles(false);
                 });
 
+            setLoadingSuppliers(true);
             const suppliersPromise = fetchSuppliers()
                 .then((data) => {
                     if (fetchRunRef.current !== runId) return;
@@ -2209,6 +2250,10 @@ export default function ReorderScreen() {
                 })
                 .catch((err) => {
                     warn('[Reorder] suppliers failed', err);
+                })
+                .finally(() => {
+                    if (fetchRunRef.current !== runId) return;
+                    setLoadingSuppliers(false);
                 });
 
             setLoadingStock(true);
@@ -2445,13 +2490,36 @@ export default function ReorderScreen() {
                             <View style={styles.cardTopRow}>
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.code}>{item.article}</Text>
-                                    <Text style={styles.titleText}>{item.title}</Text>
-                                    {item.supplier ? (
+                                    {loadingArticles && item.title === item.article ? (
+                                        <View style={styles.metadataLoadingRow}>
+                                            <ActivityIndicator size="small" color="#1976d2" />
+                                            <Text style={styles.metadataLoadingText}>
+                                                {t('reorderAssist.loadingArticleInfo')}
+                                            </Text>
+                                        </View>
+                                    ) : item.title && item.title !== item.article ? (
+                                        <Text style={styles.titleText}>{item.title}</Text>
+                                    ) : null}
+                                    {loadingArticles || loadingSuppliers ? (
+                                        <View style={styles.metadataLoadingRow}>
+                                            <ActivityIndicator size="small" color="#1976d2" />
+                                            <Text style={styles.metadataLoadingText}>
+                                                {t('reorderAssist.loadingSupplierInfo')}
+                                            </Text>
+                                        </View>
+                                    ) : item.supplier ? (
                                         <Text style={styles.supplierText}>{item.supplier}</Text>
                                     ) : item.supplierNumber ? (
                                         <Text style={styles.supplierText}>{item.supplierNumber}</Text>
                                     ) : null}
-                                    {item.isWebshopArticle ? (
+                                    {loadingArticles ? (
+                                        <View style={styles.webshopLoadingRow}>
+                                            <ActivityIndicator size="small" color="#1976d2" />
+                                            <Text style={styles.webshopLoadingText}>
+                                                {t('reorderAssist.loadingWebshopStatus')}
+                                            </Text>
+                                        </View>
+                                    ) : item.isWebshopArticle ? (
                                         <Text style={styles.webshopText}>{t('webshopArticle')}</Text>
                                     ) : null}
                                 </View>
@@ -3105,6 +3173,28 @@ const styles = StyleSheet.create({
         color: '#1976d2',
         marginTop: 4,
         fontWeight: '600',
+    },
+    metadataLoadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 4,
+    },
+    metadataLoadingText: {
+        fontSize: 11,
+        color: '#5f6f87',
+        fontStyle: 'italic',
+    },
+    webshopLoadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 4,
+    },
+    webshopLoadingText: {
+        fontSize: 11,
+        color: '#5f6f87',
+        fontStyle: 'italic',
     },
     decisionBox: {
         borderRadius: 8,

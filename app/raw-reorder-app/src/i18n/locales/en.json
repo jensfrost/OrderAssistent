@@ -664,6 +664,9 @@
     "reorderAssist.loadingStockDecision": "Waiting for stock data before calculating order recommendation.",
     "reorderAssist.loadingStockGlobal": "Loading stock balances...",
     "reorderAssist.loadingStockShort": "Loading stock",
+    "reorderAssist.loadingArticleInfo": "Loading product text...",
+    "reorderAssist.loadingSupplierInfo": "Loading supplier...",
+    "reorderAssist.loadingWebshopStatus": "Checking webshop status...",
     "reorderAssist.matchingDelivery": "Matching delivery",
 
     "columns.stockQtyVisma": "Stock (Visma)",

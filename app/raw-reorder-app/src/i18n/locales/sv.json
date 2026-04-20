@@ -670,6 +670,9 @@
     "reorderAssist.loadingStockDecision": "Väntar på lagerdata innan beställningsrekommendationen kan beräknas.",
     "reorderAssist.loadingStockGlobal": "Laddar lagersaldon...",
     "reorderAssist.loadingStockShort": "Laddar lager",
+    "reorderAssist.loadingArticleInfo": "Laddar produkttext...",
+    "reorderAssist.loadingSupplierInfo": "Laddar leverantör...",
+    "reorderAssist.loadingWebshopStatus": "Kontrollerar webbshopsstatus...",
     "reorderAssist.matchingDelivery": "Matchande leverans",
 
     "columns.stockQtyVisma": "Saldo (Visma)",
