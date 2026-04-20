@@ -109,6 +109,16 @@ export const AccountMenuOverlay: React.FC = () => {
     return (
         <Pressable style={styles.overlay} onPress={close}>
             <Pressable style={styles.menu} onPress={(e) => e.stopPropagation()}>
+                <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => {
+                        close();
+                        navigation.navigate('Help');
+                    }}
+                >
+                    <Text style={styles.menuText}>{i18n.t('nav.help') || 'Hjälp'}</Text>
+                </TouchableOpacity>
+
                 {user && (
                     <TouchableOpacity
                         onPress={() => {

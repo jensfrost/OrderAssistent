@@ -9,6 +9,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
 import ChangePasswordScreen from './src/screens/ChangePasswordScreen';
+import HelpScreen from './src/screens/HelpScreen';
 import InstallAppScreen from './src/screens/InstallAppScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import UsersScreen from './src/screens/UsersScreen';
@@ -26,6 +27,7 @@ export type RootStackParamList = {
   Home: undefined;
   Reorder: undefined;
   ChangePassword: undefined;
+  Help: undefined;
   InstallApp: undefined;
   Users: undefined;
 };
@@ -72,6 +74,11 @@ function PrivateStack() {
         name="ChangePassword"
         component={ChangePasswordScreen}
         options={{ title: i18n.t('nav.changePassword') || 'Byt lösenord' }}
+      />
+      <Stack.Screen
+        name="Help"
+        component={HelpScreen}
+        options={{ title: i18n.t('nav.help') || 'Hjälp' }}
       />
       <Stack.Screen
         name="InstallApp"
