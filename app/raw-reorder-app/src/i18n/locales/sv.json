@@ -379,7 +379,7 @@
     "auth.change.missingCurrent": "Ange nuvarande lösenord.",
     "auth.change.success": "Lösenordet är uppdaterat.",
     "auth.change.error": "Kunde inte byta lösenord just nu.",
-    "auth.title": "Logga in",
+    "auth.title": "Logga in Orderassistent",
     "auth.email": "E-post",
     "auth.email_placeholder": "namn@exempel.se",
     "auth.password": "Lösenord",

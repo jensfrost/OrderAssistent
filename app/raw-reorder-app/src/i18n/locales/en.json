@@ -377,7 +377,7 @@
     "auth.change.missingCurrent": "Please enter your current password.",
     "auth.change.success": "Your password has been updated.",
     "auth.change.error": "Could not change the password right now.",
-    "auth.title": "Sign in",
+    "auth.title": "Sign in to OrderAssistent",
     "auth.email": "Email",
     "auth.email_placeholder": "name@example.com",
     "auth.password": "Password",
