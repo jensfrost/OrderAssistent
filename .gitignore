@@ -1,0 +1,78 @@
+# ─────────────────────────────
+# Node / Expo basics
+# ─────────────────────────────
+node_modules/
+.expo/
+.expo-shared/
+
+# Env secrets (keep only *.env.example in repo)
+*.env
+.env*
+!*.env.example
+!.env.example
+
+# Metro / bundler cache etc (optional but useful to ignore)
+*.packager.dev.js
+*.packager.prod.js
+*.packager.cache
+.expo-dev-client.json
+
+# ─────────────────────────────
+# PM2 configs
+# (IGNORERAS = privat serverkonfig med paths/lösen)
+# Om du vill versionshantera pm2 setup, ta bort dessa rader.
+# ─────────────────────────────
+ecosystem.config.js
+ecosystem.*.config.js
+ecosystem.json
+
+# ─────────────────────────────
+# Build artifacts / web exports
+# Allt som kan genereras igen
+# ─────────────────────────────
+dist/
+web-preview/dist/
+
+app/HundapoteketApp/dist-dev/
+app/HundapoteketApp/web/downloads/
+
+# (lägg till fler build-mappar här om du har dem, t.ex. dist-preview osv)
+# app/HundapoteketApp/dist/
+# app/HundapoteketApp/dist-preview/
+
+# ─────────────────────────────
+# APKs and large binaries
+# Vi vill INTE lägga APK i Git,
+# MEN vi vill ha android.json & annan metadata kvar
+# ─────────────────────────────
+public/downloads/**/*.apk
+app/HundapoteketApp/downloads/**/*.apk
+app/HundapoteketApp/downloads/**/*.apk.sha256
+app/HundapoteketApp/public/downloads/
+app/HundapoteketApp/app/HundapoteketApp/public/downloads/
+
+# ─────────────────────────────
+# Logs / runtime junk
+# ─────────────────────────────
+# Generic logs
+*.log
+*.log.*
+logs/
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# npm / yarn / pnpm debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# PM2 logs (covers common pm2 output like pm2-*.log etc)
+pm2-*.log
+*pm2*out*.log
+*pm2*err*.log
+
+
