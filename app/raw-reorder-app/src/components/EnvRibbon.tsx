@@ -24,7 +24,7 @@ type Props = {
 function getEnv(): Env {
     const c: any = Constants as any;
     const extra = (c.expoConfig?.extra ?? c.manifest?.extra ?? {}) as any;
-    const v = String(extra.ENV ?? 'dev').toLowerCase();
+    const v = String(extra.ENV ?? extra.EXPO_PUBLIC_ENV ?? process.env.EXPO_PUBLIC_ENV ?? 'dev').toLowerCase();
     return v === 'prod' ? 'prod' : (v === 'preview' ? 'preview' : 'dev');
 }
 
@@ -46,7 +46,6 @@ export default function EnvRibbon({
     zIndex = 100000,
 }: Props) {
     const env = getEnv();
-    if (env === 'prod') return null;
 
     const insets = useSafeAreaInsets();
     const isRight = position === 'top-right';
@@ -56,13 +55,25 @@ export default function EnvRibbon({
     const top = (isWeb ? 0 : (insets?.top ?? 0)) + (isWeb ? offsetWeb : offsetNative);
 
     // färg
-    const color = env === 'preview' ? '#f59e0b' : '#d32f2f';
+    const color =
+        env === 'prod'
+            ? '#15803d'
+            : env === 'preview'
+                ? '#f59e0b'
+                : '#d32f2f';
 
     // label via i18n (fallback om nyckel saknas)
-    const labelKey = env === 'preview' ? 'env.productionBanner' : 'env.developmentBanner';
+    const labelKey =
+        env === 'prod'
+            ? 'env.productionBanner'
+            : env === 'preview'
+                ? 'env.previewBanner'
+                : 'env.developmentBanner';
     const t = i18n.t(labelKey) as unknown as string;
     const label =
-        (typeof t === 'string' && t.trim()) ? t.trim() : (env === 'preview' ? 'PRODUKTION' : 'DEVELOPMENT');
+        (typeof t === 'string' && t.trim())
+            ? t.trim()
+            : (env === 'prod' ? 'PRODUKTION' : env === 'preview' ? 'PREVIEW' : 'DEVELOPMENT');
 
     // beräkna säkert maxskift utifrån vinkel + box
     const rotRad = (angleDeg * Math.PI) / 180;

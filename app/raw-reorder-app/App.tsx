@@ -1,6 +1,8 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import './src/i18n/i18n';
 import i18n from './src/i18n/i18n';
@@ -20,6 +22,7 @@ import {
   AccountMenuProvider,
   AccountMenuOverlay,
 } from './src/components/AccountMenu';
+import EnvRibbon from './src/components/EnvRibbon';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -118,12 +121,28 @@ function AppNavigator() {
 export default function App() {
   return (
     <AuthProvider>
-      <AccountMenuProvider>
-        <NavigationContainer linking={linking}>
-          <AppNavigator />
-          <AccountMenuOverlay />
-        </NavigationContainer>
-      </AccountMenuProvider>
+      <SafeAreaProvider style={{ flex: 1 }}>
+        <AccountMenuProvider>
+          <View style={{ flex: 1, position: 'relative', backgroundColor: '#fff' }}>
+            <NavigationContainer linking={linking}>
+              <AppNavigator />
+              <AccountMenuOverlay />
+            </NavigationContainer>
+            <EnvRibbon
+              position="top-right"
+              offsetWeb={-100}
+              offsetNative={-90}
+              box={250}
+              bandWidth={620}
+              thickness={28}
+              angleDeg={35}
+              labelShiftWeb={50}
+              labelShiftNative={10}
+              zIndex={100000}
+            />
+          </View>
+        </AccountMenuProvider>
+      </SafeAreaProvider>
     </AuthProvider>
   );
 }

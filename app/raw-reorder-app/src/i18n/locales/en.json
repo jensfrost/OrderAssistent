@@ -612,6 +612,7 @@
     "legend.cost": "Cost",
     "legend.batch": "Batch",
     "env.productionBanner": "Production",
+    "env.previewBanner": "Preview",
     "env.developmentBanner": "Development",
     "app.installApp": "Install app",
     "installApp.title": "Install the App",
