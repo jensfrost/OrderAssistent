@@ -81,6 +81,15 @@ const currentPlayUrl =
       ? process.env.EXPO_PUBLIC_ANDROID_PLAY_URL_PROD || ''
       : process.env.EXPO_PUBLIC_ANDROID_PLAY_URL_DEV || '';
 
+const versionFilePath = path.resolve(__dirname, 'version.android.json');
+
+const versionInfo = fs.existsSync(versionFilePath)
+  ? JSON.parse(fs.readFileSync(versionFilePath, 'utf8'))
+  : { versionName: '1.0.0', versionCode: 1 };
+
+const appVersion = String(versionInfo.versionName || '1.0.0');
+const androidVersionCode = Number(versionInfo.versionCode || 1);
+
 const config: ExpoConfig = {
   name: isProd
     ? 'OrderAssistent'
@@ -88,7 +97,7 @@ const config: ExpoConfig = {
       ? 'OrderAssistent (PREVIEW)'
       : 'OrderAssistent (DEV)',
   slug: 'raw-reorder-app',
-  version: '1.0.0',
+  version: appVersion,
   orientation: 'portrait',
   platforms: ['ios', 'android', 'web'],
 
@@ -116,6 +125,7 @@ const config: ExpoConfig = {
       : isPreview
         ? 'com.jens.rawreorderapp.preview'
         : 'com.jens.rawreorderapp.dev',
+    versionCode: androidVersionCode,
 
     icon: ICON_PATH,
 
