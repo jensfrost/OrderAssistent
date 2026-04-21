@@ -34,9 +34,23 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+const linking = {
+  config: {
+    screens: {
+      ResetPassword: 'reset',
+    },
+  },
+};
+
+function isResetPasswordUrl() {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
+  return path === 'reset';
+}
+
 function PublicStack() {
   return (
-    <Stack.Navigator>
+    <Stack.Navigator initialRouteName={isResetPasswordUrl() ? 'ResetPassword' : 'Login'}>
       <Stack.Screen
         name="Login"
         component={LoginScreen}
@@ -105,7 +119,7 @@ export default function App() {
   return (
     <AuthProvider>
       <AccountMenuProvider>
-        <NavigationContainer>
+        <NavigationContainer linking={linking}>
           <AppNavigator />
           <AccountMenuOverlay />
         </NavigationContainer>

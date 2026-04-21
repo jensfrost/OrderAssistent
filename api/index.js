@@ -16,7 +16,7 @@ const envFile =
   ENV === 'preview' ? '.env.preview'    :
                       '.env.development';
 
-loadEnv({ path: path.resolve(__dirname, envFile) });
+loadEnv({ path: path.resolve(__dirname, envFile), override: true });
 console.log(`[ENV] loaded ${envFile} (APP_ENV=${ENV || '(unset)'})`);
 
 const DB_HOST = process.env.DB_HOST || process.env.SQLSERVER_HOST || process.env.MSSQL_HOST || '(not set)';
