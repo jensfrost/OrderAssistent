@@ -617,7 +617,7 @@
     "legend.cost": "Kostnad",
     "legend.batch": "Parti",
     "env.productionBanner": "Produktion",
-    "env.previewBanner": "Preview",
+    "env.previewBanner": "Produktion",
     "env.developmentBanner": "Utveckling",
     "app.installApp": "Installera app",
     "installApp.title": "Installera appen",
