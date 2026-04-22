@@ -1,4 +1,5 @@
 import React from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View } from 'react-native';
@@ -120,29 +121,31 @@ function AppNavigator() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <SafeAreaProvider style={{ flex: 1 }}>
-        <AccountMenuProvider>
-          <View style={{ flex: 1, position: 'relative', backgroundColor: '#fff' }}>
-            <NavigationContainer linking={linking}>
-              <AppNavigator />
-              <AccountMenuOverlay />
-            </NavigationContainer>
-            <EnvRibbon
-              position="top-right"
-              offsetWeb={-100}
-              offsetNative={-90}
-              box={250}
-              bandWidth={620}
-              thickness={28}
-              angleDeg={35}
-              labelShiftWeb={50}
-              labelShiftNative={10}
-              zIndex={100000}
-            />
-          </View>
-        </AccountMenuProvider>
-      </SafeAreaProvider>
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#fff' }}>
+      <AuthProvider>
+        <SafeAreaProvider style={{ flex: 1 }}>
+          <AccountMenuProvider>
+            <View style={{ flex: 1, position: 'relative', backgroundColor: '#fff' }}>
+              <NavigationContainer linking={linking}>
+                <AppNavigator />
+                <AccountMenuOverlay />
+              </NavigationContainer>
+              <EnvRibbon
+                position="top-right"
+                offsetWeb={-100}
+                offsetNative={-90}
+                box={250}
+                bandWidth={620}
+                thickness={28}
+                angleDeg={35}
+                labelShiftWeb={50}
+                labelShiftNative={10}
+                zIndex={100000}
+              />
+            </View>
+          </AccountMenuProvider>
+        </SafeAreaProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }

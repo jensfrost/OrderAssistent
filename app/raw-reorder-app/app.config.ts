@@ -17,16 +17,13 @@ const envFileMap = {
   dev: '.env.development',
 } as const;
 
-if (!process.env.__ENV_LOADED) {
-  loadEnv({
-    path: path.resolve(
-      __dirname,
-      envFileMap[initialEnv as keyof typeof envFileMap] ?? '.env.development'
-    ),
-    override: true,
-  });
-  process.env.__ENV_LOADED = '1';
-}
+loadEnv({
+  path: path.resolve(
+    __dirname,
+    envFileMap[initialEnv as keyof typeof envFileMap] ?? '.env.development'
+  ),
+  override: true,
+});
 
 const mapEnv = (raw: string) => {
   if (!raw) return 'dev';
@@ -146,6 +143,10 @@ const config: ExpoConfig = {
     favicon: './assets/favicon.png',
     bundler: 'metro',
   },
+
+  plugins: [
+    'expo-secure-store',
+  ],
 
   extra: {
     ENV: envName,

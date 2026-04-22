@@ -1,6 +1,6 @@
 // auth/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { storage } from '../api/storage';
+import { storage } from '../storage';
 
 // ✅ RÄTT import – peka på din axios-instans i /api/index.ts
 import { api, setAuthToken, onUnauthorized } from '../index';
@@ -41,12 +41,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const persist = async (t: string | null, u?: User | null) => {
         setTokenState(t);
         setAuthToken(t);
-        if (t) await SecureStore.setItemAsync(TOKEN_KEY, t);
-        else await SecureStore.deleteItemAsync(TOKEN_KEY);
+        if (t) await storage.setItem(TOKEN_KEY, t);
+        else await storage.deleteItem(TOKEN_KEY);
 
         if (u !== undefined) {
-            if (u) await SecureStore.setItemAsync(USER_KEY, JSON.stringify(u));
-            else await SecureStore.deleteItemAsync(USER_KEY);
+            if (u) await storage.setItem(USER_KEY, JSON.stringify(u));
+            else await storage.deleteItem(USER_KEY);
         }
     };
 
@@ -65,8 +65,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     useEffect(() => {
         (async () => {
             try {
-                const t = await SecureStore.getItemAsync(TOKEN_KEY);
-                const u = await SecureStore.getItemAsync(USER_KEY);
+                const t = await storage.getItem(TOKEN_KEY);
+                const u = await storage.getItem(USER_KEY);
                 if (t) setAuthToken(t);
                 if (u) {
                     setUser(JSON.parse(u) as User);
