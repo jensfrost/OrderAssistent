@@ -9,7 +9,7 @@ import { resetPasswordWithToken } from '../api/authReg';
 function getWebToken(): string {
     if (Platform.OS !== 'web') return '';
     try {
-        const params = new URLSearchParams(window.location.search);
+        const params = new URLSearchParams(window.location?.search || '');
         return params.get('token') || '';
     } catch {
         return '';

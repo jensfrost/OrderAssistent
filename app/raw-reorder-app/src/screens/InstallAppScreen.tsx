@@ -43,7 +43,7 @@ function isIOSUAWeb() {
 function absolutizeUrl(url: string) {
     if (!url) return '';
     if (/^https?:\/\//i.test(url)) return url;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
         return new URL(url, window.location.origin).toString();
     }
     return url;
@@ -110,7 +110,7 @@ function basename(u: string) {
     try {
         const abs = /^https?:\/\//i.test(u)
             ? u
-            : typeof window !== 'undefined'
+            : Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
                 ? new URL(u, window.location.origin).toString()
                 : u;
         const p = new URL(abs).pathname;

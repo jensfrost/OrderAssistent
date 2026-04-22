@@ -88,25 +88,25 @@ const isProdLike = () => RUNTIME_ENV === 'prod';
 function readEnvUrl(baseKey: string): string | undefined {
   const envUpper = RUNTIME_ENV.toUpperCase();
 
-  // 1) process.env.<KEY>_<ENV>
+  // 1) extra.<KEY>_<ENV>
+  const fromExtraSpecific = extra[`${baseKey}_${envUpper}`];
+
+  // 2) process.env.<KEY>_<ENV>
   const fromProcEnvSpecific =
     process.env[`${baseKey}_${envUpper}` as keyof typeof process.env];
 
-  // 2) extra.<KEY>_<ENV>
-  const fromExtraSpecific = extra[`${baseKey}_${envUpper}`];
+  // 3) extra.<KEY>
+  const fromExtraGeneric = extra[baseKey];
 
-  // 3) process.env.<KEY>
+  // 4) process.env.<KEY>
   const fromProcGeneric =
     process.env[baseKey as keyof typeof process.env];
 
-  // 4) extra.<KEY>
-  const fromExtraGeneric = extra[baseKey];
-
   return (
-    (fromProcEnvSpecific as string) ||
     (fromExtraSpecific as string) ||
-    (fromProcGeneric as string) ||
+    (fromProcEnvSpecific as string) ||
     (fromExtraGeneric as string) ||
+    (fromProcGeneric as string) ||
     undefined
   );
 }

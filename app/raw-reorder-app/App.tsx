@@ -2,7 +2,7 @@ import React from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import './src/i18n/i18n';
@@ -38,6 +38,9 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+const getWebLocation = () =>
+  Platform.OS === 'web' && typeof window !== 'undefined' ? window.location : undefined;
+
 const linking = {
   config: {
     screens: {
@@ -47,9 +50,49 @@ const linking = {
 };
 
 function isResetPasswordUrl() {
-  if (typeof window === 'undefined') return false;
-  const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
+  const pathname = getWebLocation()?.pathname;
+  if (!pathname) return false;
+  const path = pathname.replace(/^\/+|\/+$/g, '');
   return path === 'reset';
+}
+
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[AppErrorBoundary]', error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    const message = this.state.error.message || String(this.state.error);
+    const stack = this.state.error.stack || '';
+
+    return (
+      <ScrollView
+        style={{ flex: 1, backgroundColor: '#fff' }}
+        contentContainerStyle={{ padding: 20, gap: 12 }}
+      >
+        <Text style={{ fontSize: 20, fontWeight: '700', color: '#b91c1c' }}>
+          Appen kunde inte starta
+        </Text>
+        <Text style={{ fontSize: 15, color: '#111827' }}>{message}</Text>
+        {!!stack && (
+          <Text selectable style={{ fontSize: 12, color: '#374151' }}>
+            {stack}
+          </Text>
+        )}
+      </ScrollView>
+    );
+  }
 }
 
 function PublicStack() {
@@ -122,30 +165,32 @@ function AppNavigator() {
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#fff' }}>
-      <AuthProvider>
-        <SafeAreaProvider style={{ flex: 1 }}>
-          <AccountMenuProvider>
-            <View style={{ flex: 1, position: 'relative', backgroundColor: '#fff' }}>
-              <NavigationContainer linking={linking}>
-                <AppNavigator />
-                <AccountMenuOverlay />
-              </NavigationContainer>
-              <EnvRibbon
-                position="top-right"
-                offsetWeb={-100}
-                offsetNative={-90}
-                box={250}
-                bandWidth={620}
-                thickness={28}
-                angleDeg={35}
-                labelShiftWeb={50}
-                labelShiftNative={10}
-                zIndex={100000}
-              />
-            </View>
-          </AccountMenuProvider>
-        </SafeAreaProvider>
-      </AuthProvider>
+      <AppErrorBoundary>
+        <AuthProvider>
+          <SafeAreaProvider style={{ flex: 1 }}>
+            <AccountMenuProvider>
+              <View style={{ flex: 1, position: 'relative', backgroundColor: '#fff' }}>
+                <NavigationContainer linking={linking}>
+                  <AppNavigator />
+                  <AccountMenuOverlay />
+                </NavigationContainer>
+                <EnvRibbon
+                  position="top-right"
+                  offsetWeb={-100}
+                  offsetNative={-90}
+                  box={250}
+                  bandWidth={620}
+                  thickness={28}
+                  angleDeg={35}
+                  labelShiftWeb={50}
+                  labelShiftNative={10}
+                  zIndex={100000}
+                />
+              </View>
+            </AccountMenuProvider>
+          </SafeAreaProvider>
+        </AuthProvider>
+      </AppErrorBoundary>
     </GestureHandlerRootView>
   );
 }
