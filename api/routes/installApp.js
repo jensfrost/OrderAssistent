@@ -10,8 +10,91 @@ function resolveAppRoot() {
   return path.resolve(__dirname, '..', '..', 'app', 'raw-reorder-app');
 }
 
-function findApk(env) {
+function resolveOrderAssistRoot() {
+  return path.resolve(__dirname, '..', '..');
+}
+
+function readJson(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function readVersionInfo() {
   const appRoot = resolveAppRoot();
+  const versionPath = path.join(appRoot, 'version.android.json');
+  const version = readJson(versionPath) || {};
+
+  return {
+    versionName: String(version.versionName || '1.0.0'),
+    versionCode: Number(version.versionCode || 1),
+  };
+}
+
+function versionedFileName(env, versionName, versionCode) {
+  return `orderassistent-${env}-${versionName}-vc${versionCode}.apk`;
+}
+
+function findPublishedApk(env) {
+  const appRoot = resolveAppRoot();
+  const orderAssistRoot = resolveOrderAssistRoot();
+  const downloadDirs = [
+    path.join(orderAssistRoot, 'web-preview', 'dist', 'downloads', env),
+    path.join(appRoot, 'public', 'downloads', env),
+  ];
+
+  for (const dir of downloadDirs) {
+    if (!fs.existsSync(dir)) continue;
+
+    const manifest = readJson(path.join(dir, 'android.json'));
+    const manifestFileName = manifest?.file ? path.basename(String(manifest.file)) : '';
+    const latestFileName = `orderassistent-${env}-latest.apk`;
+    const versionedApks = fs
+      .readdirSync(dir)
+      .filter((name) =>
+        /^orderassistent-.+\.apk$/i.test(name) &&
+        !/-latest\.apk$/i.test(name)
+      )
+      .map((name) => path.join(dir, name))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+
+    const candidates = [
+      manifestFileName ? path.join(dir, manifestFileName) : '',
+      path.join(dir, latestFileName),
+      ...versionedApks,
+    ].filter(Boolean);
+
+    const filePath = candidates.find((candidate) => fs.existsSync(candidate));
+    if (!filePath) continue;
+
+    const stat = fs.statSync(filePath);
+    const fallbackVersion = readVersionInfo();
+    const versionName = String(manifest?.versionName || fallbackVersion.versionName);
+    const versionCode = Number(manifest?.versionCode || fallbackVersion.versionCode);
+
+    return {
+      env,
+      filePath,
+      size: stat.size,
+      mtime: stat.mtime,
+      versionName,
+      versionCode,
+      sha256: manifest?.sha256 || null,
+      notes: manifest?.notes || `${env} build for OrderAssistent`,
+      date: manifest?.date || stat.mtime.toISOString(),
+      fileName: versionedFileName(env, versionName, versionCode),
+    };
+  }
+
+  return null;
+}
+
+function findGradleApk(env) {
+  const appRoot = resolveAppRoot();
+  const version = readVersionInfo();
 
   const candidates = {
     dev: [
@@ -43,13 +126,17 @@ function findApk(env) {
     filePath,
     size: stat.size,
     mtime: stat.mtime,
-    fileName:
-      env === 'preview'
-        ? 'orderassistent-preview.apk'
-        : env === 'prod'
-          ? 'orderassistent.apk'
-          : 'orderassistent-dev.apk',
+    versionName: version.versionName,
+    versionCode: version.versionCode,
+    sha256: null,
+    notes: `${env} build for OrderAssistent`,
+    date: stat.mtime.toISOString(),
+    fileName: versionedFileName(env, version.versionName, version.versionCode),
   };
+}
+
+function findApk(env) {
+  return findPublishedApk(env) || findGradleApk(env);
 }
 
 router.get('/android/apk', (req, res) => {
@@ -81,18 +168,17 @@ router.get('/android/manifest', (req, res) => {
     });
   }
 
-  const versionCode = Math.floor(apk.mtime.getTime() / 1000);
-  const versionName = apk.mtime.toISOString().slice(0, 19).replace('T', ' ');
-
   const baseUrl = `${req.protocol}://${req.get('host')}`;
 
   res.json({
-    versionName,
-    versionCode,
+    versionName: apk.versionName,
+    versionCode: apk.versionCode,
     apkUrl: `${baseUrl}/api/install/android/apk?env=${encodeURIComponent(env)}`,
     env,
-    notes: `${env} build for OrderAssistent`,
-    date: apk.mtime.toISOString(),
+    notes: apk.notes,
+    date: apk.date,
+    fileName: apk.fileName,
+    sha256: apk.sha256,
     file: `${baseUrl}/api/install/android/apk?env=${encodeURIComponent(env)}`,
   });
 });

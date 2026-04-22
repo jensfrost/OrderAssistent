@@ -122,7 +122,8 @@ if (-not $webRootMap.ContainsKey($Env)) {
 $webRoot = $webRootMap[$Env]
 
 if (-not (Test-Path $webRoot)) {
-  throw "Web root not found for env '$Env': $webRoot"
+  Write-Host "Creating web root for env '$Env': $webRoot"
+  New-Item -ItemType Directory -Path $webRoot -Force | Out-Null
 }
 
 $dstDir = Join-Path $webRoot "downloads\$Env"
