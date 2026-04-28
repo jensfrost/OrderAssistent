@@ -14,6 +14,15 @@
     "webshopOnly": "Webshop articles only",
     "fetchingLeadTimes": "Fetching lead times per article...",
     "reorderAssist.fetchLeadTime": "Fetch lead time",
+    "reorderAssist.bulkEditTitle": "Bulk update filtered list",
+    "reorderAssist.bulkEditHint": "If no products are selected, all {{count}} products shown in the list will be updated.",
+    "reorderAssist.bulkEditApply": "Update {{count}} products",
+    "reorderAssist.bulkEditError": "Enter a valid number or leave the field empty.",
+    "reorderAssist.bulkEditSelectedHint": "Updating {{count}} selected products in the list.",
+    "reorderAssist.bulkEditSelectedCount": "Selected products: {{count}}",
+    "reorderAssist.bulkEditSelectAll": "Select all",
+    "reorderAssist.bulkEditDeselectAll": "Deselect all",
+    "reorderAssist.bulkEditSelectArticle": "Bulk update",
     "webshopArticle": "Webshop article",
     "orderingDecision": "Ordering decision",
     "estimatedOutOfStock": "Estimated out of stock",
@@ -27,6 +36,7 @@
     "auto": "auto",
     "leadTimeBasis": "Lead time basis",
     "safetyBasis": "Safety basis",
+    "orderCycleBasis": "Order cycle basis",
     "targetLevel": "Target level",
     "reorderDecisionCannotCalculate": "Cannot calculate the latest order date.",
     "reorderDecisionOrderNowPastDate": "Order now. Latest order date was {{date}}.",
@@ -513,6 +523,7 @@
     "reorderAssist.monthlyUsage": "Monthly usage",
     "reorderAssist.quarterlyUsage": "Quarterly usage",
     "reorderAssist.yearlyUsage": "Yearly usage",
+    "reorderAssist.orderCycleDays": "Order cycle days",
     "reorderAssist.day": "day",
     "reorderAssist.daysCover": "Days of cover",
     "reorderAssist.rop": "Reorder point",
@@ -699,3 +710,4 @@
     "reorderAssist.help.formulas": "Lead time basis = daily usage × lead time. Safety basis = daily usage × safety days. Target level = the sum of those two.",
     "reorderAssist.help.history": "Latest orders show earlier purchases for the item. Matching delivery fetches the delivery note that appears to belong to a specific order number when you ask for it."
 }
+

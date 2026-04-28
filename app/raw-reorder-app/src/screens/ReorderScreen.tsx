@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
@@ -57,6 +57,7 @@ type ProductSettingsMap = Record<
     {
         leadTimeDays?: number;
         safetyDays?: number;
+        orderCycleDays?: number;
         packSize?: number;
     }
 >;
@@ -67,6 +68,7 @@ type StatusFilterValue = 'OK' | 'WATCH' | 'ORDER';
 type SupplierFilterOption = {
     value: string;
     label: string;
+    queryValue: string;
 };
 type ResolvedArticleMap = Record<string, true>;
 type LoadingArticleMap = Record<string, boolean>;
@@ -95,13 +97,16 @@ type AssistantRow = {
     avgPerYear: number;
     leadTimeDays: number;
     safetyDays: number;
+    orderCycleDays: number;
     packSize: number;
     hasCustomLeadTime: boolean;
     hasAutoLeadTime: boolean;
     hasCustomSafetyDays: boolean;
+    hasCustomOrderCycleDays: boolean;
     hasCustomPackSize: boolean;
     forecastLeadTimeQty: number;
     safetyQty: number;
+    cycleQty: number;
     targetStockQty: number;
     currentStockQty: number;
     suggestedOrderQty: number;
@@ -133,6 +138,8 @@ type ReorderAssistPersistedSettings = {
     to?: string;
     leadTimeDays?: string;
     safetyDays?: string;
+    orderCycleDays?: string;
+    orderCycleDaysAuto?: boolean;
     packSize?: string;
     minValidDays?: string;
     maxValidDays?: string;
@@ -182,6 +189,51 @@ function LabelWithHelp({
     );
 }
 
+function NumberStepperInput({
+    value,
+    onChangeText,
+    minValue = 0,
+    placeholder,
+    invalid = false,
+    compact = false,
+}: {
+    value: string;
+    onChangeText: (value: string) => void;
+    minValue?: number;
+    placeholder?: string;
+    invalid?: boolean;
+    compact?: boolean;
+}) {
+    return (
+        <View style={styles.stepperRow}>
+            <TouchableOpacity
+                style={[styles.stepperButton, compact && styles.stepperButtonMini]}
+                onPress={() => onChangeText(adjustNumericString(value, -1, minValue))}
+            >
+                <Text style={styles.stepperButtonText}>-</Text>
+            </TouchableOpacity>
+
+            <TextInput
+                value={value}
+                onChangeText={onChangeText}
+                keyboardType="numeric"
+                placeholder={placeholder}
+                style={[
+                    compact ? styles.inputMiniStepper : styles.inputCompactStepper,
+                    invalid && styles.inputCompactInvalid,
+                ]}
+            />
+
+            <TouchableOpacity
+                style={[styles.stepperButton, compact && styles.stepperButtonMini]}
+                onPress={() => onChangeText(adjustNumericString(value, 1, minValue))}
+            >
+                <Text style={styles.stepperButtonText}>+</Text>
+            </TouchableOpacity>
+        </View>
+    );
+}
+
 function ActiveFilterChip({
     label,
     onRemove,
@@ -196,6 +248,37 @@ function ActiveFilterChip({
                 <Text style={styles.activeFilterChipRemoveText}>x</Text>
             </TouchableOpacity>
         </View>
+    );
+}
+
+function MasterSelectionCheckbox({
+    checked,
+    label,
+    onPress,
+}: {
+    checked: boolean;
+    label: string;
+    onPress: () => void;
+}) {
+    return (
+        <TouchableOpacity style={styles.selectionColumnMaster} onPress={onPress}>
+            <View
+                style={[
+                    styles.cardSelectionCheckbox,
+                    checked && styles.cardSelectionCheckboxActive,
+                ]}
+            >
+                <Text
+                    style={[
+                        styles.cardSelectionCheckboxText,
+                        checked && styles.cardSelectionCheckboxTextActive,
+                    ]}
+                >
+                    {checked ? 'x' : ''}
+                </Text>
+            </View>
+            <Text style={styles.selectionColumnMasterLabel}>{label}</Text>
+        </TouchableOpacity>
     );
 }
 
@@ -600,7 +683,8 @@ function normalizeSupplierNumber(value: unknown): string {
     const raw = String(value ?? '').trim().toUpperCase();
     if (!raw) return '';
 
-    const numericCandidate = raw.replace(',', '.');
+    const compact = raw.replace(/\s+/g, '');
+    const numericCandidate = compact.replace(',', '.');
     if (/^\d+(?:\.0+)?$/.test(numericCandidate)) {
         const numericValue = Number(numericCandidate);
         if (Number.isFinite(numericValue)) {
@@ -608,7 +692,14 @@ function normalizeSupplierNumber(value: unknown): string {
         }
     }
 
-    return raw;
+    if (/^[\d\-/.]+$/.test(compact)) {
+        const digits = compact.replace(/\D+/g, '');
+        if (digits) {
+            return digits.replace(/^0+/, '') || '0';
+        }
+    }
+
+    return compact;
 }
 
 function isWebshopArticle(articleInfo?: ExtendedArticle): boolean {
@@ -656,10 +747,12 @@ function downloadCsv(filename: string, rows: AssistantRow[]) {
         'Per Year',
         'Lead Time Days',
         'Safety Days',
+        'Order Cycle Days',
         'Pack Size',
         'Custom Lead Time',
         'Auto Lead Time',
         'Custom Safety Days',
+        'Custom Order Cycle Days',
         'Custom Pack Size',
         'On Hand',
         'Days Until Out Of Stock',
@@ -667,6 +760,7 @@ function downloadCsv(filename: string, rows: AssistantRow[]) {
         'Latest Order Date',
         'Lead Time Forecast',
         'Safety',
+        'Order Cycle Forecast',
         'Target',
         'Suggested Order',
         'Rounded Order',
@@ -696,10 +790,12 @@ function downloadCsv(filename: string, rows: AssistantRow[]) {
                 row.avgPerYear,
                 row.leadTimeDays,
                 row.safetyDays,
+                row.orderCycleDays,
                 row.packSize,
                 row.hasCustomLeadTime ? 'true' : 'false',
                 row.hasAutoLeadTime ? 'true' : 'false',
                 row.hasCustomSafetyDays ? 'true' : 'false',
+                row.hasCustomOrderCycleDays ? 'true' : 'false',
                 row.hasCustomPackSize ? 'true' : 'false',
                 row.currentStockQty,
                 row.daysUntilOutOfStock ?? '',
@@ -707,6 +803,7 @@ function downloadCsv(filename: string, rows: AssistantRow[]) {
                 row.latestOrderDate ?? '',
                 row.forecastLeadTimeQty,
                 row.safetyQty,
+                row.cycleQty,
                 row.targetStockQty,
                 row.suggestedOrderQty,
                 row.roundedOrderQty,
@@ -737,6 +834,7 @@ function buildAssistantRows(
     to: string,
     globalLeadTimeDays: number,
     globalSafetyDays: number,
+    globalOrderCycleDays: number | undefined,
     globalPackSize: number
 ): AssistantRow[] {
     const days = Math.max(daysBetweenInclusive(from, to), 1);
@@ -785,7 +883,7 @@ function buildAssistantRows(
             const supplierNumber = normalizeSupplierNumber(supplierNumberRaw);
 
             const supplierInfo = supplierMap.get(supplierNumber);
-            const supplier = String(supplierInfo?.supplierName ?? supplierNumber ?? '').trim();
+            const supplier = String(supplierInfo?.supplierName ?? '').trim();
 
             const settings = productSettings[article];
             const autoLeadTimeDays = autoLeadTimes[article];
@@ -801,6 +899,10 @@ function buildAssistantRows(
                 globalLeadTimeDays;
 
             const effectiveSafetyDays = settings?.safetyDays ?? globalSafetyDays;
+            const effectiveOrderCycleDays =
+                settings?.orderCycleDays ??
+                globalOrderCycleDays ??
+                (effectiveLeadTimeDays + effectiveSafetyDays);
             const effectivePackSize = settings?.packSize ?? globalPackSize;
 
             const avgPerDay = totalQty / days;
@@ -810,7 +912,8 @@ function buildAssistantRows(
             const avgPerYear = avgPerDay * 365;
             const forecastLeadTimeQty = avgPerDay * effectiveLeadTimeDays;
             const safetyQty = avgPerDay * effectiveSafetyDays;
-            const targetStockQty = forecastLeadTimeQty + safetyQty;
+            const cycleQty = avgPerDay * effectiveOrderCycleDays;
+            const targetStockQty = forecastLeadTimeQty + safetyQty + cycleQty;
 
             const stockRow = stockMap.get(article);
             const currentStockQty = stockRow ? getStockQty(stockRow) : 0;
@@ -848,7 +951,7 @@ function buildAssistantRows(
                     articleInfo?.ARENHET ||
                     undefined,
                 supplier: supplier || undefined,
-                supplierNumber: supplierNumber || undefined,
+                supplierNumber: supplierNumberRaw || undefined,
                 totalQty: round2(totalQty),
                 avgPerDay: round2(avgPerDay),
                 avgPerWeek: round2(avgPerWeek),
@@ -857,13 +960,16 @@ function buildAssistantRows(
                 avgPerYear: round2(avgPerYear),
                 leadTimeDays: effectiveLeadTimeDays,
                 safetyDays: effectiveSafetyDays,
+                orderCycleDays: effectiveOrderCycleDays,
                 packSize: effectivePackSize,
                 hasCustomLeadTime,
                 hasAutoLeadTime,
                 hasCustomSafetyDays: settings?.safetyDays != null,
+                hasCustomOrderCycleDays: settings?.orderCycleDays != null,
                 hasCustomPackSize: settings?.packSize != null,
                 forecastLeadTimeQty: round2(forecastLeadTimeQty),
                 safetyQty: round2(safetyQty),
+                cycleQty: round2(cycleQty),
                 targetStockQty: round2(targetStockQty),
                 currentStockQty: round2(currentStockQty),
                 suggestedOrderQty: round2(suggestedOrderQty),
@@ -1008,6 +1114,7 @@ function getFetchErrorMessage(
         | 'date'
         | 'leadTime'
         | 'safety'
+        | 'orderCycle'
         | 'packSize'
         | 'leadTimeRange'
         | 'fromBeforeTo'
@@ -1021,6 +1128,8 @@ function getFetchErrorMessage(
             return `${t('common.error')} ${t('reorderAssist.leadTime')}`;
         case 'safety':
             return `${t('common.error')} ${t('reorderAssist.safetyDays')}`;
+        case 'orderCycle':
+            return `${t('common.error')} ${t('reorderAssist.orderCycleDays')}`;
         case 'packSize':
             return `${t('common.error')} ${t('raw.field.quantity')}`;
         case 'leadTimeRange':
@@ -1047,9 +1156,11 @@ type ReorderHeaderProps = {
 
     leadTimeDays: string;
     safetyDays: string;
+    orderCycleDays: string;
     packSize: string;
     setLeadTimeDays: (value: string) => void;
     setSafetyDays: (value: string) => void;
+    setOrderCycleDays: (value: string) => void;
     setPackSize: (value: string) => void;
 
     minValidDays: string;
@@ -1088,6 +1199,9 @@ type ReorderHeaderProps = {
     loading: boolean;
 
     filteredRowsLength: number;
+    selectedVisibleRowsLength: number;
+    bulkApplyRowsLength: number;
+    allVisibleRowsSelected: boolean;
     reorderRowsLength: number;
     error: string | null;
     loadingLeadTimes: boolean;
@@ -1097,6 +1211,14 @@ type ReorderHeaderProps = {
     history: StockHistoryResponse | null;
 
     onExportCsv: () => void;
+    onSelectAllVisibleRows: () => void;
+    onClearBulkSelection: () => void;
+    onApplyBulkVisibleSettings: (values: {
+        leadTimeDays?: number;
+        safetyDays?: number;
+        orderCycleDays?: number;
+        packSize?: number;
+    }) => void;
 };
 
 const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProps) {
@@ -1112,9 +1234,11 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         setTo,
         leadTimeDays,
         safetyDays,
+        orderCycleDays,
         packSize,
         setLeadTimeDays,
         setSafetyDays,
+        setOrderCycleDays,
         setPackSize,
         minValidDays,
         maxValidDays,
@@ -1144,6 +1268,9 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         handleFetch,
         loading,
         filteredRowsLength,
+        selectedVisibleRowsLength,
+        bulkApplyRowsLength,
+        allVisibleRowsSelected,
         reorderRowsLength,
         error,
         loadingLeadTimes,
@@ -1152,10 +1279,17 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         leadTimeProgress,
         history,
         onExportCsv,
+        onSelectAllVisibleRows,
+        onClearBulkSelection,
+        onApplyBulkVisibleSettings,
     } = props;
 
     const [showSupplierModal, setShowSupplierModal] = useState(false);
     const [supplierSearch, setSupplierSearch] = useState('');
+    const [bulkLeadTimeDays, setBulkLeadTimeDays] = useState('');
+    const [bulkSafetyDays, setBulkSafetyDays] = useState('');
+    const [bulkOrderCycleDays, setBulkOrderCycleDays] = useState('');
+    const [bulkPackSize, setBulkPackSize] = useState('');
 
     const supplierLabelByValue = useMemo(
         () => new Map(supplierFilterOptions.map((option) => [option.value, option.label])),
@@ -1195,11 +1329,33 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
     const supplierSelectText =
         selectedSuppliers.length > 0
             ? selectedSupplierSummary
-            : loadingSuppliers && supplierFilterOptions.length === 0
-                ? t('reorderAssist.loadingSupplierInfo')
-                : supplierFilterOptions.length === 0
-                    ? t('common.noData')
-                    : selectedSupplierSummary;
+            : supplierFilterOptions.length === 0
+                ? t('common.all')
+                : selectedSupplierSummary;
+    const parsedBulkLeadTimeDays = parseOptionalNumber(bulkLeadTimeDays);
+    const parsedBulkSafetyDays = parseOptionalNumber(bulkSafetyDays);
+    const parsedBulkOrderCycleDays = parseOptionalNumber(bulkOrderCycleDays);
+    const parsedBulkPackSize = parseOptionalNumber(bulkPackSize);
+    const bulkLeadTimeIsValid =
+        bulkLeadTimeDays.trim().length === 0 || parsedBulkLeadTimeDays != null;
+    const bulkSafetyDaysIsValid =
+        bulkSafetyDays.trim().length === 0 || parsedBulkSafetyDays != null;
+    const bulkOrderCycleIsValid =
+        bulkOrderCycleDays.trim().length === 0 || parsedBulkOrderCycleDays != null;
+    const bulkPackSizeIsValid =
+        bulkPackSize.trim().length === 0 || parsedBulkPackSize != null;
+    const canApplyBulkSettings =
+        bulkApplyRowsLength > 0 &&
+        bulkLeadTimeIsValid &&
+        bulkSafetyDaysIsValid &&
+        bulkOrderCycleIsValid &&
+        bulkPackSizeIsValid &&
+        (
+            parsedBulkLeadTimeDays != null ||
+            parsedBulkSafetyDays != null ||
+            parsedBulkOrderCycleDays != null ||
+            parsedBulkPackSize != null
+        );
 
     const handleSearchInputChange = (value: string) => {
         const { completedTerms, remainder } = splitCommittedSearchInput(value);
@@ -1222,6 +1378,17 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
 
         setSearchTerms((prev) => mergeSearchTerms(prev, terms));
         setSearchInput('');
+    };
+
+    const applyBulkVisibleSettings = () => {
+        if (!canApplyBulkSettings) return;
+
+        onApplyBulkVisibleSettings({
+            leadTimeDays: parsedBulkLeadTimeDays,
+            safetyDays: parsedBulkSafetyDays,
+            orderCycleDays: parsedBulkOrderCycleDays,
+            packSize: parsedBulkPackSize,
+        });
     };
 
     return (
@@ -1345,78 +1512,39 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                                 label={t('reorderAssist.leadTime')}
                                 onPress={() => onOpenHelp('leadTime')}
                             />
-                            <View style={styles.stepperRow}>
-                                <TouchableOpacity
-                                    style={styles.stepperButton}
-                                    onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, -1, 0))}
-                                >
-                                    <Text style={styles.stepperButtonText}>-</Text>
-                                </TouchableOpacity>
-                                <TextInput
-                                    value={leadTimeDays}
-                                    onChangeText={setLeadTimeDays}
-                                    keyboardType="numeric"
-                                    style={styles.inputCompactStepper}
-                                />
-                                <TouchableOpacity
-                                    style={styles.stepperButton}
-                                    onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, 1, 0))}
-                                >
-                                    <Text style={styles.stepperButtonText}>+</Text>
-                                </TouchableOpacity>
-                            </View>
+
+                            <NumberStepperInput
+                                value={leadTimeDays}
+                                onChangeText={setLeadTimeDays}
+                                minValue={0}
+                            />
+
                         </View>
                         <View style={styles.fieldThird}>
                             <LabelWithHelp
                                 label={t('reorderAssist.safetyDays')}
                                 onPress={() => onOpenHelp('safetyDays')}
                             />
-                            <View style={styles.stepperRow}>
-                                <TouchableOpacity
-                                    style={styles.stepperButton}
-                                    onPress={() => setSafetyDays(adjustNumericString(safetyDays, -1, 0))}
-                                >
-                                    <Text style={styles.stepperButtonText}>-</Text>
-                                </TouchableOpacity>
-                                <TextInput
-                                    value={safetyDays}
-                                    onChangeText={setSafetyDays}
-                                    keyboardType="numeric"
-                                    style={styles.inputCompactStepper}
-                                />
-                                <TouchableOpacity
-                                    style={styles.stepperButton}
-                                    onPress={() => setSafetyDays(adjustNumericString(safetyDays, 1, 0))}
-                                >
-                                    <Text style={styles.stepperButtonText}>+</Text>
-                                </TouchableOpacity>
-                            </View>
+
+                            <NumberStepperInput
+                                value={safetyDays}
+                                onChangeText={setSafetyDays}
+                                minValue={0}
+                            />
+
                         </View>
                         <View style={styles.fieldThird}>
                             <LabelWithHelp
                                 label={t('raw.field.quantity')}
                                 onPress={() => onOpenHelp('packSize')}
                             />
-                            <View style={styles.stepperRow}>
-                                <TouchableOpacity
-                                    style={styles.stepperButton}
-                                    onPress={() => setPackSize(adjustNumericString(packSize, -1, 1))}
-                                >
-                                    <Text style={styles.stepperButtonText}>-</Text>
-                                </TouchableOpacity>
-                                <TextInput
-                                    value={packSize}
-                                    onChangeText={setPackSize}
-                                    keyboardType="numeric"
-                                    style={styles.inputCompactStepper}
-                                />
-                                <TouchableOpacity
-                                    style={styles.stepperButton}
-                                    onPress={() => setPackSize(adjustNumericString(packSize, 1, 1))}
-                                >
-                                    <Text style={styles.stepperButtonText}>+</Text>
-                                </TouchableOpacity>
-                            </View>
+
+                            <NumberStepperInput
+                                value={packSize}
+                                onChangeText={setPackSize}
+                                minValue={1}
+                            />
+
                         </View>
                     </View>
                 ) : (
@@ -1427,26 +1555,13 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                                     label={t('reorderAssist.leadTime')}
                                     onPress={() => onOpenHelp('leadTime')}
                                 />
-                                <View style={styles.stepperRow}>
-                                    <TouchableOpacity
-                                        style={styles.stepperButton}
-                                        onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, -1, 0))}
-                                    >
-                                        <Text style={styles.stepperButtonText}>-</Text>
-                                    </TouchableOpacity>
-                                    <TextInput
-                                        value={leadTimeDays}
-                                        onChangeText={setLeadTimeDays}
-                                        keyboardType="numeric"
-                                        style={styles.inputCompactStepper}
-                                    />
-                                    <TouchableOpacity
-                                        style={styles.stepperButton}
-                                        onPress={() => setLeadTimeDays(adjustNumericString(leadTimeDays, 1, 0))}
-                                    >
-                                        <Text style={styles.stepperButtonText}>+</Text>
-                                    </TouchableOpacity>
-                                </View>
+
+                                <NumberStepperInput
+                                    value={leadTimeDays}
+                                    onChangeText={setLeadTimeDays}
+                                    minValue={0}
+                                />
+
                             </View>
                         </View>
                         <View style={styles.row}>
@@ -1455,26 +1570,11 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                                     label={t('reorderAssist.safetyDays')}
                                     onPress={() => onOpenHelp('safetyDays')}
                                 />
-                                <View style={styles.stepperRow}>
-                                    <TouchableOpacity
-                                        style={styles.stepperButton}
-                                        onPress={() => setSafetyDays(adjustNumericString(safetyDays, -1, 0))}
-                                    >
-                                        <Text style={styles.stepperButtonText}>-</Text>
-                                    </TouchableOpacity>
-                                    <TextInput
+                                    <NumberStepperInput
                                         value={safetyDays}
                                         onChangeText={setSafetyDays}
-                                        keyboardType="numeric"
-                                        style={styles.inputCompactStepper}
+                                        minValue={0}
                                     />
-                                    <TouchableOpacity
-                                        style={styles.stepperButton}
-                                        onPress={() => setSafetyDays(adjustNumericString(safetyDays, 1, 0))}
-                                    >
-                                        <Text style={styles.stepperButtonText}>+</Text>
-                                    </TouchableOpacity>
-                                </View>
                             </View>
                         </View>
                         <View style={styles.row}>
@@ -1483,47 +1583,41 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                                     label={t('raw.field.quantity')}
                                     onPress={() => onOpenHelp('packSize')}
                                 />
-                                <View style={styles.stepperRow}>
-                                    <TouchableOpacity
-                                        style={styles.stepperButton}
-                                        onPress={() => setPackSize(adjustNumericString(packSize, -1, 1))}
-                                    >
-                                        <Text style={styles.stepperButtonText}>-</Text>
-                                    </TouchableOpacity>
-                                    <TextInput
+                                    <NumberStepperInput
                                         value={packSize}
                                         onChangeText={setPackSize}
-                                        keyboardType="numeric"
-                                        style={styles.inputCompactStepper}
+                                        minValue={1}
                                     />
-                                    <TouchableOpacity
-                                        style={styles.stepperButton}
-                                        onPress={() => setPackSize(adjustNumericString(packSize, 1, 1))}
-                                    >
-                                        <Text style={styles.stepperButtonText}>+</Text>
-                                    </TouchableOpacity>
-                                </View>
                             </View>
                         </View>
                     </>
                 )}
                 <View style={styles.row}>
                     <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('leadtime.minValidDays')}</Text>
-                        <TextInput
-                            value={minValidDays}
-                            onChangeText={setMinValidDays}
-                            keyboardType="numeric"
-                            style={styles.inputCompact}
+                        <Text style={styles.label}>{t('reorderAssist.orderCycleDays')}</Text>
+                        <NumberStepperInput
+                            value={orderCycleDays}
+                            onChangeText={setOrderCycleDays}
+                            minValue={0}
                         />
                     </View>
+                </View>
+                <View style={styles.row}>
+                    <View style={styles.fieldHalf}>
+                        <Text style={styles.label}>{t('leadtime.minValidDays')}</Text>
+                        <NumberStepperInput
+                            value={minValidDays}
+                            onChangeText={setMinValidDays}
+                            minValue={0}
+                        />
+                    </View>
+
                     <View style={styles.fieldHalf}>
                         <Text style={styles.label}>{t('leadtime.maxValidDays')}</Text>
-                        <TextInput
+                        <NumberStepperInput
                             value={maxValidDays}
                             onChangeText={setMaxValidDays}
-                            keyboardType="numeric"
-                            style={styles.inputCompact}
+                            minValue={0}
                         />
                     </View>
                 </View>
@@ -1544,29 +1638,26 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                         <View style={styles.row}>
                             <View style={styles.fieldThird}>
                                 <Text style={styles.label}>{t('leadtime.maxBookingHeads')}</Text>
-                                <TextInput
+                                <NumberStepperInput
                                     value={maxBookingHeads}
                                     onChangeText={setMaxBookingHeads}
-                                    keyboardType="numeric"
-                                    style={styles.inputCompact}
+                                    minValue={1}
                                 />
                             </View>
                             <View style={styles.fieldThird}>
                                 <Text style={styles.label}>{t('leadtime.maxDeliveryHeads')}</Text>
-                                <TextInput
+                                <NumberStepperInput
                                     value={maxDeliveryHeads}
                                     onChangeText={setMaxDeliveryHeads}
-                                    keyboardType="numeric"
-                                    style={styles.inputCompact}
+                                    minValue={1}
                                 />
                             </View>
                             <View style={styles.fieldThird}>
                                 <Text style={styles.label}>{t('leadtime.timeoutMs')}</Text>
-                                <TextInput
+                                <NumberStepperInput
                                     value={leadTimeTimeoutMs}
                                     onChangeText={setLeadTimeTimeoutMs}
-                                    keyboardType="numeric"
-                                    style={styles.inputCompact}
+                                    minValue={1000}
                                 />
                             </View>
                         </View>
@@ -1595,6 +1686,100 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                         <TouchableOpacity style={styles.buttonSecondary} onPress={onExportCsv}>
                             <Text style={styles.buttonSecondaryText}>{t('export.exportCsv')}</Text>
                         </TouchableOpacity>
+                    ) : null}
+                </View>
+
+                <View style={styles.bulkEditBox}>
+                    <Text style={styles.bulkEditTitle}>{t('reorderAssist.bulkEditTitle')}</Text>
+
+                    <Text style={styles.bulkEditHint}>
+                        {selectedVisibleRowsLength > 0
+                            ? t('reorderAssist.bulkEditSelectedHint', { count: selectedVisibleRowsLength })
+                            : t('reorderAssist.bulkEditHint', { count: filteredRowsLength })}
+                    </Text>
+
+                    <View style={styles.bulkEditRow}>
+
+                        <View style={styles.bulkEditField}>
+                            <Text style={styles.labelSmall}>{t('reorderAssist.leadTime')}</Text>
+                            <NumberStepperInput
+                                value={bulkLeadTimeDays}
+                                onChangeText={setBulkLeadTimeDays}
+                                minValue={0}
+                                placeholder={leadTimeDays}
+                                invalid={!bulkLeadTimeIsValid}
+                            />
+                        </View>
+
+                        <View style={styles.bulkEditField}>
+                            <Text style={styles.labelSmall}>{t('reorderAssist.safetyDays')}</Text>
+                            <NumberStepperInput
+                                value={bulkSafetyDays}
+                                onChangeText={setBulkSafetyDays}
+                                minValue={0}
+                                placeholder={safetyDays}
+                                invalid={!bulkSafetyDaysIsValid}
+                            />
+                        </View>
+
+                        <View style={styles.bulkEditField}>
+                            <Text style={styles.labelSmall}>{t('raw.field.quantity')}</Text>
+                            <NumberStepperInput
+                                value={bulkPackSize}
+                                onChangeText={setBulkPackSize}
+                                minValue={1}
+                                placeholder={packSize}
+                                invalid={!bulkPackSizeIsValid}
+                            />
+                        </View>
+
+                        <View style={styles.bulkEditField}>
+                            <Text style={styles.labelSmall}>{t('reorderAssist.orderCycleDays')}</Text>
+                            <NumberStepperInput
+                                value={bulkOrderCycleDays}
+                                onChangeText={setBulkOrderCycleDays}
+                                minValue={0}
+                                placeholder={orderCycleDays}
+                                invalid={!bulkOrderCycleIsValid}
+                            />
+                        </View>
+
+                    </View>
+
+                    <View style={styles.bulkEditActions}>
+                        <TouchableOpacity
+                            style={[
+                                styles.bulkEditApplyButton,
+                                !canApplyBulkSettings && styles.bulkEditApplyButtonDisabled,
+                            ]}
+                            onPress={applyBulkVisibleSettings}
+                            disabled={!canApplyBulkSettings}
+                        >
+                            <Text style={styles.bulkEditApplyButtonText}>
+                                {t('reorderAssist.bulkEditApply', { count: bulkApplyRowsLength })}
+                            </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.buttonSecondary}
+                            onPress={() => {
+                                setBulkLeadTimeDays('');
+                                setBulkSafetyDays('');
+                                setBulkOrderCycleDays('');
+                                setBulkPackSize('');
+                            }}
+                        >
+                            <Text style={styles.buttonSecondaryText}>{t('common.clear')}</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {!bulkLeadTimeIsValid ||
+                        !bulkSafetyDaysIsValid ||
+                        !bulkOrderCycleIsValid ||
+                        !bulkPackSizeIsValid ? (
+                        <Text style={styles.bulkEditErrorText}>
+                            {t('reorderAssist.bulkEditError')}
+                        </Text>
                     ) : null}
                 </View>
             </View>
@@ -1758,6 +1943,20 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                 </View>
             </View>
 
+            {filteredRowsLength > 0 ? (
+                <View style={styles.selectionColumnGuideRow}>
+                    <MasterSelectionCheckbox
+                        checked={allVisibleRowsSelected}
+                        label={t('common.all')}
+                        onPress={
+                            allVisibleRowsSelected
+                                ? onClearBulkSelection
+                                : onSelectAllVisibleRows
+                        }
+                    />
+                </View>
+            ) : null}
+
             <Modal
                 visible={showSupplierModal}
                 transparent
@@ -1889,6 +2088,8 @@ export default function ReorderScreen() {
 
     const [leadTimeDays, setLeadTimeDays] = useState('14');
     const [safetyDays, setSafetyDays] = useState('7');
+    const [orderCycleDays, setOrderCycleDays] = useState('');
+    const [useAutoOrderCycleDays, setUseAutoOrderCycleDays] = useState(true);
     const [packSize, setPackSize] = useState('1');
 
     const [minValidDays, setMinValidDays] = useState('0');
@@ -1925,6 +2126,7 @@ export default function ReorderScreen() {
     const [resolvedStockArticles, setResolvedStockArticles] = useState<ResolvedArticleMap>({});
     const [articles, setArticles] = useState<ExtendedArticle[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+    const [supplierLookupReady, setSupplierLookupReady] = useState(false);
     const [productSettings, setProductSettings] = useState<ProductSettingsMap>({});
     const [autoLeadTimes, setAutoLeadTimes] = useState<AutoLeadTimeMap>({});
     const [loadingAutoLeadTimeArticles, setLoadingAutoLeadTimeArticles] = useState<LoadingArticleMap>({});
@@ -1938,12 +2140,25 @@ export default function ReorderScreen() {
     const [completedHistoryArticles, setCompletedHistoryArticles] = useState<Record<string, true>>({});
     const [loadingPurchaseHistory, setLoadingPurchaseHistory] = useState<Record<string, boolean>>({});
     const [loadingIncomingHistory, setLoadingIncomingHistory] = useState<Record<string, boolean>>({});
+    const [selectedBulkArticles, setSelectedBulkArticles] = useState<Record<string, true>>({});
     const [settingsHydrated, setSettingsHydrated] = useState(false);
 
     const fetchRunRef = useRef(0);
     const historyRef = useRef<StockHistoryResponse | null>(null);
     const completedHistoryArticlesRef = useRef<Record<string, true>>({});
     const inFlightHistoryArticlesRef = useRef<Record<string, true>>({});
+    const supplierLookupTokenRef = useRef(0);
+
+    const defaultOrderCycleDays = useMemo(() => {
+        const parsedLeadTime = parseNonNegativeNumberWithFallback(leadTimeDays, 14);
+        const parsedSafetyDays = parseNonNegativeNumberWithFallback(safetyDays, 7);
+        return String(parsedLeadTime + parsedSafetyDays);
+    }, [leadTimeDays, safetyDays]);
+
+    useEffect(() => {
+        if (!useAutoOrderCycleDays) return;
+        setOrderCycleDays(defaultOrderCycleDays);
+    }, [useAutoOrderCycleDays, defaultOrderCycleDays]);
 
     useEffect(() => {
         historyRef.current = history;
@@ -1956,7 +2171,38 @@ export default function ReorderScreen() {
     useEffect(() => {
         let cancelled = false;
 
+        const loadArticles = async () => {
+            setLoadingArticles(true);
+
+            try {
+                const data = await fetchVismaArticles();
+                if (cancelled) return;
+
+                log('[Init] vismaArticles loaded', Array.isArray(data) ? data.length : data);
+                setArticles(Array.isArray(data) ? (data as ExtendedArticle[]) : []);
+            } catch (err) {
+                if (cancelled) return;
+                warn('[Init] visma articles failed', err);
+            } finally {
+                if (!cancelled) {
+                    setLoadingArticles(false);
+                }
+            }
+        };
+
+        void loadArticles();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
         const loadSuppliers = async () => {
+            const supplierLookupToken = ++supplierLookupTokenRef.current;
+            setSupplierLookupReady(false);
             setLoadingSuppliers(true);
 
             try {
@@ -1971,6 +2217,9 @@ export default function ReorderScreen() {
             } finally {
                 if (!cancelled) {
                     setLoadingSuppliers(false);
+                    if (supplierLookupTokenRef.current === supplierLookupToken) {
+                        setSupplierLookupReady(true);
+                    }
                 }
             }
         };
@@ -2004,6 +2253,14 @@ export default function ReorderScreen() {
                 }
                 if (typeof parsed.safetyDays === 'string') {
                     setSafetyDays(parsed.safetyDays);
+                }
+                if (typeof parsed.orderCycleDaysAuto === 'boolean') {
+                    setUseAutoOrderCycleDays(parsed.orderCycleDaysAuto);
+                } else if (typeof parsed.orderCycleDays === 'string') {
+                    setUseAutoOrderCycleDays(parsed.orderCycleDays.trim().length === 0);
+                }
+                if (typeof parsed.orderCycleDays === 'string') {
+                    setOrderCycleDays(parsed.orderCycleDays);
                 }
                 if (typeof parsed.packSize === 'string') {
                     setPackSize(parsed.packSize);
@@ -2115,6 +2372,8 @@ export default function ReorderScreen() {
             to,
             leadTimeDays,
             safetyDays,
+            orderCycleDays,
+            orderCycleDaysAuto: useAutoOrderCycleDays,
             packSize,
             minValidDays,
             maxValidDays,
@@ -2144,6 +2403,8 @@ export default function ReorderScreen() {
         to,
         leadTimeDays,
         safetyDays,
+        orderCycleDays,
+        useAutoOrderCycleDays,
         packSize,
         minValidDays,
         maxValidDays,
@@ -2178,7 +2439,14 @@ export default function ReorderScreen() {
 
         const parsedLeadTime = Number(leadTimeDays);
         const parsedSafetyDays = Number(safetyDays);
+        const parsedOrderCycleDays = Number(orderCycleDays);
         const parsedPackSize = Number(packSize);
+        const explicitOrderCycleDays =
+            !useAutoOrderCycleDays &&
+            Number.isFinite(parsedOrderCycleDays) &&
+            parsedOrderCycleDays >= 0
+                ? parsedOrderCycleDays
+                : undefined;
 
         return buildAssistantRows(
             history.rows,
@@ -2191,6 +2459,7 @@ export default function ReorderScreen() {
             history.to,
             Number.isFinite(parsedLeadTime) && parsedLeadTime >= 0 ? parsedLeadTime : 14,
             Number.isFinite(parsedSafetyDays) && parsedSafetyDays >= 0 ? parsedSafetyDays : 7,
+            explicitOrderCycleDays,
             Number.isFinite(parsedPackSize) && parsedPackSize > 0 ? parsedPackSize : 1
         );
     }, [
@@ -2202,6 +2471,8 @@ export default function ReorderScreen() {
         autoLeadTimes,
         leadTimeDays,
         safetyDays,
+        orderCycleDays,
+        useAutoOrderCycleDays,
         packSize,
     ]);
 
@@ -2219,6 +2490,7 @@ export default function ReorderScreen() {
             uniqueSuppliers.set(value, {
                 value,
                 label: getSupplierFilterLabel(supplier) || value,
+                queryValue: String(row.supplierNumber ?? '').trim() || value,
             });
         }
 
@@ -2229,6 +2501,7 @@ export default function ReorderScreen() {
             uniqueSuppliers.set(value, {
                 value,
                 label: getSupplierFilterLabel(row) || value,
+                queryValue: String(row.supplierNumber ?? '').trim() || value,
             });
         }
 
@@ -2237,10 +2510,15 @@ export default function ReorderScreen() {
         );
     }, [suppliers, reorderRows]);
 
+    const normalizedActiveSearchTerms = useMemo(
+        () =>
+            mergeSearchTerms(searchTerms, [searchInput])
+                .map((value) => normalizeSearchText(value))
+                .filter(Boolean),
+        [searchInput, searchTerms]
+    );
+
     const filteredRows = useMemo(() => {
-        const activeSearchTerms = mergeSearchTerms(searchTerms, [searchInput])
-            .map((value) => normalizeSearchText(value))
-            .filter(Boolean);
         const normalizedSelectedSuppliers = selectedSuppliers
             .map((value) => normalizeSupplierNumber(value))
             .filter(Boolean);
@@ -2253,7 +2531,8 @@ export default function ReorderScreen() {
             normalizedSelectedSuppliers.length > 0 &&
             normalizedSelectedSuppliers.length === fetchedSupplierScope.size &&
             normalizedSelectedSuppliers.every((value) => fetchedSupplierScope.has(value));
-
+        const isWaitingForSupplierResolution =
+            loadingArticles || loadingSuppliers || !supplierLookupReady;
         let result = reorderRows.filter((row) => {
             const haystacks = [
                 normalizeSearchText(row.article),
@@ -2262,8 +2541,8 @@ export default function ReorderScreen() {
                 normalizeSearchText(row.supplierNumber || ''),
             ];
             const matchesSearch =
-                activeSearchTerms.length === 0 ||
-                activeSearchTerms.some((term) =>
+                normalizedActiveSearchTerms.length === 0 ||
+                normalizedActiveSearchTerms.some((term) =>
                     haystacks.some((value) => value.includes(term))
                 );
 
@@ -2274,7 +2553,7 @@ export default function ReorderScreen() {
                     ? true
                     : rowSupplierValue
                         ? normalizedSelectedSuppliers.includes(rowSupplierValue)
-                        : loadingArticles || hasMatchingFetchedSupplierScope;
+                        : isWaitingForSupplierResolution && hasMatchingFetchedSupplierScope;
             const matchesWebshop = webshopFilter === 'ALL' ? true : row.isWebshopArticle === true;
 
             return matchesSearch && matchesStatus && matchesSupplier && matchesWebshop;
@@ -2304,7 +2583,35 @@ export default function ReorderScreen() {
         });
 
         return result;
-    }, [history, reorderRows, searchInput, searchTerms, statusFilter, selectedSuppliers, webshopFilter, sortBy, loadingArticles]);
+    }, [
+        history,
+        reorderRows,
+        normalizedActiveSearchTerms,
+        statusFilter,
+        selectedSuppliers,
+        webshopFilter,
+        sortBy,
+        loadingArticles,
+        loadingSuppliers,
+        supplierLookupReady,
+    ]);
+
+    const selectedVisibleRows = useMemo(
+        () => filteredRows.filter((row) => selectedBulkArticles[row.article] === true),
+        [filteredRows, selectedBulkArticles]
+    );
+
+    const allVisibleRowsSelected =
+        filteredRows.length > 0 &&
+        filteredRows.every((row) => selectedBulkArticles[row.article] === true);
+
+    const bulkApplyRows = selectedVisibleRows.length > 0 ? selectedVisibleRows : filteredRows;
+    const isWaitingForFilterResolution =
+        (normalizedActiveSearchTerms.length > 0 && (loadingArticles || loadingSuppliers)) ||
+        (selectedSuppliers.length > 0 &&
+            (loadingArticles || loadingSuppliers || !supplierLookupReady)) ||
+        (webshopFilter === 'WEBSHOP_ONLY' && loadingArticles) ||
+        (statusFilter.length > 0 && loadingStock);
 
     const fetchVisibleHistory = async (
         articlesToFetch: string[],
@@ -2557,6 +2864,17 @@ export default function ReorderScreen() {
         itemVisiblePercentThreshold: 30,
     }).current;
 
+    const handleOrderCycleDaysChange = (value: string) => {
+        if (!value.trim()) {
+            setUseAutoOrderCycleDays(true);
+            setOrderCycleDays(defaultOrderCycleDays);
+            return;
+        }
+
+        setUseAutoOrderCycleDays(false);
+        setOrderCycleDays(value);
+    };
+
     const handleFetch = async () => {
         const runId = Date.now();
         fetchRunRef.current = runId;
@@ -2571,6 +2889,7 @@ export default function ReorderScreen() {
 
             const parsedLeadTime = Number(leadTimeDays);
             const parsedSafetyDays = Number(safetyDays);
+            const parsedOrderCycleDays = Number(orderCycleDays);
             const parsedPackSize = Number(packSize);
 
             if (!Number.isFinite(parsedLeadTime) || parsedLeadTime < 0) {
@@ -2580,6 +2899,14 @@ export default function ReorderScreen() {
 
             if (!Number.isFinite(parsedSafetyDays) || parsedSafetyDays < 0) {
                 setError(getFetchErrorMessage('safety', t));
+                return;
+            }
+
+            if (
+                !useAutoOrderCycleDays &&
+                (!Number.isFinite(parsedOrderCycleDays) || parsedOrderCycleDays < 0)
+            ) {
+                setError(getFetchErrorMessage('orderCycle', t));
                 return;
             }
 
@@ -2605,19 +2932,20 @@ export default function ReorderScreen() {
                 to,
                 leadTimeDays,
                 safetyDays,
+                orderCycleDays,
+                useAutoOrderCycleDays,
                 packSize,
+                selectedSuppliers,
                 leadTimeFetchSettings,
             });
 
             setLoading(true);
             setLoadingLeadTimes(false);
             setLoadingStock(false);
-            setLoadingArticles(false);
             setLeadTimeProgress({ processed: 0, total: 0 });
             setHistory(null);
             setStock({ rows: [] });
             setResolvedStockArticles({});
-            setArticles([]);
             setAutoLeadTimes({});
             setLoadingAutoLeadTimeArticles({});
             setAutoLeadTimeErrors({});
@@ -2628,6 +2956,7 @@ export default function ReorderScreen() {
             setCompletedHistoryArticles({});
             setLoadingPurchaseHistory({});
             setLoadingIncomingHistory({});
+            setSelectedBulkArticles({});
             historyRef.current = null;
             completedHistoryArticlesRef.current = {};
             inFlightHistoryArticlesRef.current = {};
@@ -2637,11 +2966,23 @@ export default function ReorderScreen() {
 
             if (fetchRunRef.current !== runId) return;
 
+            const supplierNumbersForRequest = Array.from(
+                new Set(
+                    selectedSuppliers
+                        .map(
+                            (value) =>
+                                supplierFilterOptions.find((option) => option.value === value)?.queryValue ??
+                                String(value ?? '').trim()
+                        )
+                        .filter(Boolean)
+                )
+            );
+
             const historyData = await withTimeout(
                 fetchOrderAssistStockHistory({
                     from,
                     to,
-                    supplier_numbers: selectedSuppliers,
+                    supplier_numbers: supplierNumbersForRequest,
                 }),
                 300000
             );
@@ -2652,7 +2993,6 @@ export default function ReorderScreen() {
 
             setHistory(historyData ?? null);
             historyRef.current = historyData ?? null;
-            setLoading(false);
 
             const articleCodes = (historyData?.rows ?? [])
                 .map((row) => normalizeArticleCode(row.article))
@@ -2664,82 +3004,57 @@ export default function ReorderScreen() {
 
             if (!uniqueArticles.length) {
                 setStock({ rows: [] });
-                setLoadingArticles(false);
-                setLoadingSuppliers(false);
+                setLoading(false);
                 return;
             }
 
-            setLoadingArticles(true);
-            const articlesPromise = fetchVismaArticles()
-                .then((data) => {
-                    if (fetchRunRef.current !== runId) return;
-                    const articleRows = Array.isArray(data) ? (data as ExtendedArticle[]) : [];
-                    const articleWithWebshopField = articleRows.find((row) => {
-                        const root = row as any;
-                        const raw = root?.raw?.data;
-                        return (
-                            Object.prototype.hasOwnProperty.call(root, 'adk_article_webshop') ||
-                            Object.prototype.hasOwnProperty.call(raw ?? {}, 'adk_article_webshop')
-                        );
-                    });
-                    const firstArticle = articleRows[0] as any;
+            const shouldFetchArticles = articles.length === 0 && !loadingArticles;
+            const articlesPromise = shouldFetchArticles
+                ? (() => {
+                    setLoadingArticles(true);
 
-                    log('[Fetch] vismaArticles loaded', articleRows.length);
-                    log('[Fetch] vismaArticles webshop debug', {
-                        firstArticleNumber:
-                            firstArticle?.adk_article_number ?? firstArticle?.ARARTN ?? null,
-                        firstArticleKeys: firstArticle ? Object.keys(firstArticle).slice(0, 40) : [],
-                        firstRawKeys: firstArticle?.raw?.data
-                            ? Object.keys(firstArticle.raw.data).slice(0, 40)
-                            : [],
-                        webshopFieldArticleNumber: articleWithWebshopField
-                            ? ((articleWithWebshopField as any)?.adk_article_number ??
-                                (articleWithWebshopField as any)?.ARARTN ??
-                                null)
-                            : null,
-                        webshopFieldValue: articleWithWebshopField
-                            ? ((articleWithWebshopField as any)?.adk_article_webshop ??
-                                (articleWithWebshopField as any)?.raw?.data?.adk_article_webshop ??
-                                null)
-                            : null,
-                        webshopFieldSample: articleWithWebshopField
-                            ? {
-                                article:
-                                    (articleWithWebshopField as any)?.adk_article_number ??
-                                    (articleWithWebshopField as any)?.ARARTN ??
-                                    null,
-                                adk_article_webshop:
-                                    (articleWithWebshopField as any)?.adk_article_webshop ?? null,
-                                raw_adk_article_webshop:
-                                    (articleWithWebshopField as any)?.raw?.data?.adk_article_webshop ?? null,
+                    return fetchVismaArticles()
+                        .then((data) => {
+                            if (fetchRunRef.current !== runId) return;
+                            const articleRows = Array.isArray(data) ? (data as ExtendedArticle[]) : [];
+                            log('[Fetch] vismaArticles loaded on demand', articleRows.length);
+                            setArticles(articleRows);
+                        })
+                        .catch((err) => {
+                            warn('[Reorder] visma articles failed', err);
+                        })
+                        .finally(() => {
+                            if (fetchRunRef.current !== runId) return;
+                            setLoadingArticles(false);
+                        });
+                })()
+                : Promise.resolve();
+
+            const shouldFetchSuppliers = suppliers.length === 0 && !loadingSuppliers;
+            const suppliersPromise = shouldFetchSuppliers
+                ? (() => {
+                    const supplierLookupToken = ++supplierLookupTokenRef.current;
+                    setSupplierLookupReady(false);
+                    setLoadingSuppliers(true);
+
+                    return fetchSuppliers()
+                        .then((data) => {
+                            if (fetchRunRef.current !== runId) return;
+                            log('[Fetch] suppliers loaded on demand', Array.isArray(data) ? data.length : data);
+                            setSuppliers(Array.isArray(data) ? data : []);
+                        })
+                        .catch((err) => {
+                            warn('[Reorder] suppliers failed', err);
+                        })
+                        .finally(() => {
+                            if (fetchRunRef.current !== runId) return;
+                            setLoadingSuppliers(false);
+                            if (supplierLookupTokenRef.current === supplierLookupToken) {
+                                setSupplierLookupReady(true);
                             }
-                            : null,
-                    });
-
-                    setArticles(articleRows);
-                })
-                .catch((err) => {
-                    warn('[Reorder] visma articles failed', err);
-                })
-                .finally(() => {
-                    if (fetchRunRef.current !== runId) return;
-                    setLoadingArticles(false);
-                });
-
-            setLoadingSuppliers(true);
-            const suppliersPromise = fetchSuppliers()
-                .then((data) => {
-                    if (fetchRunRef.current !== runId) return;
-                    log('[Fetch] suppliers loaded', Array.isArray(data) ? data.length : data);
-                    setSuppliers(Array.isArray(data) ? data : []);
-                })
-                .catch((err) => {
-                    warn('[Reorder] suppliers failed', err);
-                })
-                .finally(() => {
-                    if (fetchRunRef.current !== runId) return;
-                    setLoadingSuppliers(false);
-                });
+                        });
+                })()
+                : Promise.resolve();
 
             setLoadingStock(true);
             setResolvedStockArticles({});
@@ -2747,6 +3062,7 @@ export default function ReorderScreen() {
             const stockPromise = (async () => {
                 const INITIAL_STOCK_BATCH_SIZE = 40;
                 const STOCK_BATCH_SIZE = 200;
+                const STOCK_BATCH_CONCURRENCY = 2;
 
                 const initialBatch = uniqueArticles.slice(0, INITIAL_STOCK_BATCH_SIZE);
                 const remainingBatches = chunkArray(
@@ -2783,21 +3099,25 @@ export default function ReorderScreen() {
                         }
                     }
 
-                    for (const batch of remainingBatches) {
+                    for (const batchGroup of chunkArray(remainingBatches, STOCK_BATCH_CONCURRENCY)) {
                         if (fetchRunRef.current !== runId) return;
 
-                        try {
-                            const batchStock = await fetchStockBalance({
-                                articles: batch,
-                                mode: 'onhand',
-                            });
+                        await Promise.all(
+                            batchGroup.map(async (batch) => {
+                                try {
+                                    const batchStock = await fetchStockBalance({
+                                        articles: batch,
+                                        mode: 'onhand',
+                                    });
 
-                            log('[Fetch] stock batch loaded', batch.length);
-                            applyStockBatch(batch, batchStock);
-                        } catch (batchErr) {
-                            warn('[Reorder] stock batch failed', batchErr);
-                            applyStockBatch(batch, { rows: [] });
-                        }
+                                    log('[Fetch] stock batch loaded', batch.length);
+                                    applyStockBatch(batch, batchStock);
+                                } catch (batchErr) {
+                                    warn('[Reorder] stock batch failed', batchErr);
+                                    applyStockBatch(batch, { rows: [] });
+                                }
+                            })
+                        );
 
                         if (fetchRunRef.current !== runId) return;
                         await sleep(25);
@@ -2810,6 +3130,7 @@ export default function ReorderScreen() {
                 }
             })();
 
+            setLoading(false);
             void Promise.allSettled([articlesPromise, suppliersPromise, stockPromise]);
         } catch (err: any) {
             if (fetchRunRef.current !== runId) return;
@@ -2823,7 +3144,7 @@ export default function ReorderScreen() {
 
     const updateProductSetting = (
         article: string,
-        field: 'leadTimeDays' | 'safetyDays' | 'packSize',
+        field: 'leadTimeDays' | 'safetyDays' | 'orderCycleDays' | 'packSize',
         rawValue: string
     ) => {
         const parsed = parseOptionalNumber(rawValue);
@@ -2838,6 +3159,7 @@ export default function ReorderScreen() {
             if (
                 nextForArticle.leadTimeDays == null &&
                 nextForArticle.safetyDays == null &&
+                nextForArticle.orderCycleDays == null &&
                 nextForArticle.packSize == null
             ) {
                 const copy = { ...prev };
@@ -2857,6 +3179,84 @@ export default function ReorderScreen() {
             const copy = { ...prev };
             delete copy[article];
             return copy;
+        });
+    };
+
+    const toggleBulkArticleSelection = (article: string) => {
+        setSelectedBulkArticles((prev) => {
+            if (prev[article]) {
+                const next = { ...prev };
+                delete next[article];
+                return next;
+            }
+
+            return {
+                ...prev,
+                [article]: true,
+            };
+        });
+    };
+
+    const selectAllVisibleRows = () => {
+        if (!filteredRows.length) return;
+
+        setSelectedBulkArticles((prev) => {
+            const next = { ...prev };
+
+            for (const row of filteredRows) {
+                next[row.article] = true;
+            }
+
+            return next;
+        });
+    };
+
+    const clearBulkSelection = () => {
+        setSelectedBulkArticles({});
+    };
+
+    const applyBulkVisibleSettings = (values: {
+        leadTimeDays?: number;
+        safetyDays?: number;
+        orderCycleDays?: number;
+        packSize?: number;
+    }) => {
+        if (!bulkApplyRows.length) return;
+        if (
+            values.leadTimeDays == null &&
+            values.safetyDays == null &&
+            values.orderCycleDays == null &&
+            values.packSize == null
+        ) {
+            return;
+        }
+
+        setProductSettings((prev) => {
+            const next = { ...prev };
+
+            for (const row of bulkApplyRows) {
+                const current = next[row.article] || {};
+                const nextForArticle = {
+                    ...current,
+                    ...(values.leadTimeDays != null ? { leadTimeDays: values.leadTimeDays } : {}),
+                    ...(values.safetyDays != null ? { safetyDays: values.safetyDays } : {}),
+                    ...(values.orderCycleDays != null ? { orderCycleDays: values.orderCycleDays } : {}),
+                    ...(values.packSize != null ? { packSize: values.packSize } : {}),
+                };
+
+                if (
+                    nextForArticle.leadTimeDays == null &&
+                    nextForArticle.safetyDays == null &&
+                    nextForArticle.orderCycleDays == null &&
+                    nextForArticle.packSize == null
+                ) {
+                    delete next[row.article];
+                } else {
+                    next[row.article] = nextForArticle;
+                }
+            }
+
+            return next;
         });
     };
 
@@ -2882,9 +3282,11 @@ export default function ReorderScreen() {
                         setTo={setTo}
                         leadTimeDays={leadTimeDays}
                         safetyDays={safetyDays}
+                        orderCycleDays={orderCycleDays}
                         packSize={packSize}
                         setLeadTimeDays={setLeadTimeDays}
                         setSafetyDays={setSafetyDays}
+                        setOrderCycleDays={handleOrderCycleDaysChange}
                         setPackSize={setPackSize}
                         minValidDays={minValidDays}
                         maxValidDays={maxValidDays}
@@ -2914,6 +3316,9 @@ export default function ReorderScreen() {
                         handleFetch={handleFetch}
                         loading={loading}
                         filteredRowsLength={filteredRows.length}
+                        selectedVisibleRowsLength={selectedVisibleRows.length}
+                        bulkApplyRowsLength={bulkApplyRows.length}
+                        allVisibleRowsSelected={allVisibleRowsSelected}
                         reorderRowsLength={reorderRows.length}
                         error={error}
                         loadingLeadTimes={loadingLeadTimes}
@@ -2922,6 +3327,9 @@ export default function ReorderScreen() {
                         leadTimeProgress={leadTimeProgress}
                         history={history}
                         onExportCsv={handleExportCsv}
+                        onSelectAllVisibleRows={selectAllVisibleRows}
+                        onClearBulkSelection={clearBulkSelection}
+                        onApplyBulkVisibleSettings={applyBulkVisibleSettings}
                     />
                 }
                 onViewableItemsChanged={onViewableItemsChanged}
@@ -2931,14 +3339,35 @@ export default function ReorderScreen() {
                 windowSize={3}
                 removeClippedSubviews={Platform.OS !== 'web'}
                 ListEmptyComponent={
-                    !loading && history ? (
+                    !loading &&
+                    !loadingArticles &&
+                    !loadingSuppliers &&
+                    !loadingStock &&
+                    !isWaitingForFilterResolution &&
+                    history ? (
                         <Text style={styles.empty}>
                             {reorderRows.length > 0 ? t('common.noResults') : t('common.noData')}
                         </Text>
                     ) : null
                 }
+                ListFooterComponent={
+                    filteredRows.length > 0 ? (
+                        <View style={styles.selectionColumnGuideRow}>
+                            <MasterSelectionCheckbox
+                                checked={allVisibleRowsSelected}
+                                label={t('common.all')}
+                                onPress={
+                                    allVisibleRowsSelected
+                                        ? clearBulkSelection
+                                        : selectAllVisibleRows
+                                }
+                            />
+                        </View>
+                    ) : null
+                }
                 renderItem={({ item }) => {
                     const custom = productSettings[item.article];
+                    const isBulkSelected = selectedBulkArticles[item.article] === true;
                     const purchaseHistory = recentPurchases[item.article] || [];
                     const isLoadingAutoLeadTime = loadingAutoLeadTimeArticles[item.article] === true;
                     const autoLeadTimeError = autoLeadTimeErrors[item.article];
@@ -2978,74 +3407,78 @@ export default function ReorderScreen() {
 
                     return (
                         <View style={styles.cardCompact}>
-                            <View style={styles.cardTopRow}>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.code}>{item.article}</Text>
-                                    {loadingArticles && item.title === item.article ? (
-                                        <View style={styles.metadataLoadingRow}>
-                                            <ActivityIndicator size="small" color="#1976d2" />
-                                            <Text style={styles.metadataLoadingText}>
-                                                {t('reorderAssist.loadingArticleInfo')}
+                            <View style={styles.cardRow}>
+                                <View style={styles.cardSelectionColumn}>
+                                    <TouchableOpacity
+                                        style={styles.cardSelectionToggle}
+                                        onPress={() => toggleBulkArticleSelection(item.article)}
+                                    >
+                                        <View
+                                            style={[
+                                                styles.cardSelectionCheckbox,
+                                                isBulkSelected && styles.cardSelectionCheckboxActive,
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.cardSelectionCheckboxText,
+                                                    isBulkSelected && styles.cardSelectionCheckboxTextActive,
+                                                ]}
+                                            >
+                                                {isBulkSelected ? 'x' : ''}
                                             </Text>
                                         </View>
-                                    ) : item.title && item.title !== item.article ? (
-                                        <Text style={styles.titleText}>{item.title}</Text>
-                                    ) : null}
-                                    {loadingArticles || loadingSuppliers ? (
-                                        <View style={styles.metadataLoadingRow}>
-                                            <ActivityIndicator size="small" color="#1976d2" />
-                                            <Text style={styles.metadataLoadingText}>
-                                                {t('reorderAssist.loadingSupplierInfo')}
-                                            </Text>
-                                        </View>
-                                    ) : item.supplier ? (
-                                        <Text style={styles.supplierText}>{item.supplier}</Text>
-                                    ) : item.supplierNumber ? (
-                                        <Text style={styles.supplierText}>{item.supplierNumber}</Text>
-                                    ) : null}
-                                    {loadingArticles ? (
-                                        <View style={styles.webshopLoadingRow}>
-                                            <ActivityIndicator size="small" color="#1976d2" />
-                                            <Text style={styles.webshopLoadingText}>
-                                                {t('reorderAssist.loadingWebshopStatus')}
-                                            </Text>
-                                        </View>
-                                    ) : item.isWebshopArticle ? (
-                                        <Text style={styles.webshopText}>{t('webshopArticle')}</Text>
-                                    ) : null}
+                                    </TouchableOpacity>
                                 </View>
 
-                                {stockIsReady ? (
-                                    <Text
-                                        style={[
-                                            styles.badge,
-                                            item.status === 'ORDER'
-                                                ? styles.badgeHigh
-                                                : item.status === 'WATCH'
-                                                    ? styles.badgeMedium
-                                                    : styles.badgeLow,
-                                        ]}
-                                    >
-                                        {getRowStatusLabel(item.status, t)}
-                                    </Text>
-                                ) : (
-                                    <Text style={[styles.badge, styles.badgeLoading]}>
-                                        {t('reorderAssist.loadingStockShort')}
-                                    </Text>
-                                )}
-                            </View>
+                                <View style={styles.cardMainColumn}>
+                                    <View style={styles.cardTopRow}>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.code}>{item.article}</Text>
+                                            {item.title && item.title !== item.article ? (
+                                                <Text style={styles.titleText}>{item.title}</Text>
+                                            ) : null}
+                                            {item.supplier ? (
+                                                <Text style={styles.supplierText}>{item.supplier}</Text>
+                                            ) : item.supplierNumber ? (
+                                                <Text style={styles.supplierText}>{item.supplierNumber}</Text>
+                                            ) : null}
+                                            {item.isWebshopArticle ? (
+                                                <Text style={styles.webshopText}>{t('webshopArticle')}</Text>
+                                            ) : null}
+                                        </View>
 
-                            {stockIsReady ? (
-                                <View
-                                    style={[
-                                        styles.decisionBox,
-                                        item.isPastLatestOrderDate
-                                            ? styles.decisionDanger
-                                            : item.daysUntilLatestOrder != null && item.daysUntilLatestOrder <= 3
-                                        ? styles.decisionWarning
-                                                : styles.decisionNeutral,
-                                    ]}
-                                >
+                                        {stockIsReady ? (
+                                            <Text
+                                                style={[
+                                                    styles.badge,
+                                                    item.status === 'ORDER'
+                                                        ? styles.badgeHigh
+                                                        : item.status === 'WATCH'
+                                                            ? styles.badgeMedium
+                                                            : styles.badgeLow,
+                                                ]}
+                                            >
+                                                {getRowStatusLabel(item.status, t)}
+                                            </Text>
+                                        ) : (
+                                            <Text style={[styles.badge, styles.badgeLoading]}>
+                                                {t('reorderAssist.loadingStockShort')}
+                                            </Text>
+                                        )}
+                                    </View>
+
+                                    {stockIsReady ? (
+                                        <View
+                                            style={[
+                                                styles.decisionBox,
+                                                item.isPastLatestOrderDate
+                                                    ? styles.decisionDanger
+                                                    : item.daysUntilLatestOrder != null && item.daysUntilLatestOrder <= 3
+                                                ? styles.decisionWarning
+                                                        : styles.decisionNeutral,
+                                            ]}
+                                        >
                                     <View style={styles.titleWithHelpRow}>
                                         <Text style={styles.decisionTitle}>{t('orderingDecision')}</Text>
                                         <HelpIconButton onPress={() => setHelpTopic('decision')} />
@@ -3097,8 +3530,8 @@ export default function ReorderScreen() {
                                         </Text>
                                     </Text>
                                 </View>
-                            ) : (
-                                <View style={[styles.decisionBox, styles.decisionLoading]}>
+                                    ) : (
+                                        <View style={[styles.decisionBox, styles.decisionLoading]}>
                                     <View style={styles.titleWithHelpRow}>
                                         <Text style={styles.decisionTitle}>
                                             {t('reorderAssist.loadingStockDecisionTitle')}
@@ -3111,8 +3544,8 @@ export default function ReorderScreen() {
                                             {t('reorderAssist.loadingStockDecision')}
                                         </Text>
                                     </View>
-                                </View>
-                            )}
+                                        </View>
+                                    )}
 
                             <View style={styles.metricsRow}>
                                 <Text style={styles.metric}>
@@ -3141,42 +3574,53 @@ export default function ReorderScreen() {
                             <View style={styles.inlineEditorRow}>
                                 <View style={styles.inlineEditorField}>
                                     <Text style={styles.labelSmall}>{t('reorderAssist.leadTime')}</Text>
-                                    <TextInput
+                                    <NumberStepperInput
                                         value={custom?.leadTimeDays != null ? String(custom.leadTimeDays) : ''}
                                         onChangeText={(value) =>
                                             updateProductSetting(item.article, 'leadTimeDays', value)
                                         }
-                                        placeholder={String(
-                                            autoLeadTimes[item.article] ?? (Number(leadTimeDays) || 14)
-                                        )}
-                                        keyboardType="numeric"
-                                        style={styles.inputMini}
+                                        minValue={0}
+                                        placeholder={String(autoLeadTimes[item.article] ?? (Number(leadTimeDays) || 14))}
+                                        compact
                                     />
                                 </View>
 
                                 <View style={styles.inlineEditorField}>
                                     <Text style={styles.labelSmall}>{t('reorderAssist.safetyDays')}</Text>
-                                    <TextInput
+                                    <NumberStepperInput
                                         value={custom?.safetyDays != null ? String(custom.safetyDays) : ''}
                                         onChangeText={(value) =>
                                             updateProductSetting(item.article, 'safetyDays', value)
                                         }
+                                        minValue={0}
                                         placeholder={String(Number(safetyDays) || 7)}
-                                        keyboardType="numeric"
-                                        style={styles.inputMini}
+                                        compact
                                     />
                                 </View>
 
                                 <View style={styles.inlineEditorField}>
                                     <Text style={styles.labelSmall}>{t('raw.field.quantity')}</Text>
-                                    <TextInput
+                                    <NumberStepperInput
                                         value={custom?.packSize != null ? String(custom.packSize) : ''}
                                         onChangeText={(value) =>
                                             updateProductSetting(item.article, 'packSize', value)
                                         }
+                                        minValue={1}
                                         placeholder={String(Number(packSize) || 1)}
-                                        keyboardType="numeric"
-                                        style={styles.inputMini}
+                                        compact
+                                    />
+                                </View>
+
+                                <View style={styles.inlineEditorField}>
+                                    <Text style={styles.labelSmall}>{t('reorderAssist.orderCycleDays')}</Text>
+                                    <NumberStepperInput
+                                        value={custom?.orderCycleDays != null ? String(custom.orderCycleDays) : ''}
+                                        onChangeText={(value) =>
+                                            updateProductSetting(item.article, 'orderCycleDays', value)
+                                        }
+                                        minValue={0}
+                                        placeholder={String(item.orderCycleDays)}
+                                        compact
                                     />
                                 </View>
 
@@ -3200,6 +3644,10 @@ export default function ReorderScreen() {
                                 <Text style={styles.metric}>
                                     {t('reorderAssist.safetyDays')}: {item.safetyDays} {t('days')}
                                     {item.hasCustomSafetyDays ? ` (${t('custom')})` : ''}
+                                </Text>
+                                <Text style={styles.metric}>
+                                    {t('reorderAssist.orderCycleDays')}: {item.orderCycleDays} {t('days')}
+                                    {item.hasCustomOrderCycleDays ? ` (${t('custom')})` : ''}
                                 </Text>
                                 <Text style={styles.metric}>
                                     {t('raw.field.quantity')}: {item.packSize}
@@ -3244,11 +3692,14 @@ export default function ReorderScreen() {
                                     {t('safetyBasis')}: {item.safetyQty} {item.unit || ''}
                                 </Text>
                                 <Text style={styles.metricMuted}>
+                                    {t('orderCycleBasis')}: {item.cycleQty} {item.unit || ''}
+                                </Text>
+                                <Text style={styles.metricMuted}>
                                     {t('targetLevel')}: {item.targetStockQty} {item.unit || ''}
                                 </Text>
                             </View>
 
-                            <View style={styles.historyBox}>
+                                    <View style={styles.historyBox}>
                                 <View style={styles.titleWithHelpRow}>
                                     <Text style={styles.historyTitle}>
                                         {t('reorderAssist.latestOrdersAndDeliveries')}
@@ -3368,8 +3819,9 @@ export default function ReorderScreen() {
                                     </Text>
                                 )}
 
+                                    </View>
+                                </View>
                             </View>
-
                         </View>
                     );
                 }}
@@ -3500,6 +3952,9 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         fontSize: 13,
     },
+    inputCompactInvalid: {
+        borderColor: '#c62828',
+    },
     selectFieldButton: {
         minHeight: 42,
         borderWidth: 1,
@@ -3611,6 +4066,60 @@ const styles = StyleSheet.create({
         gap: 8,
         flexWrap: 'wrap',
     },
+    bulkEditBox: {
+        marginTop: 10,
+        padding: 10,
+        borderWidth: 1,
+        borderColor: '#d7e1f0',
+        borderRadius: 8,
+        backgroundColor: '#f7f9fc',
+    },
+    bulkEditTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#111',
+        marginBottom: 4,
+    },
+    bulkEditHint: {
+        fontSize: 12,
+        color: '#555',
+        marginBottom: 8,
+    },
+    bulkEditRow: {
+        flexDirection: 'row',
+        gap: 8,
+        flexWrap: 'wrap',
+        marginBottom: 8,
+    },
+    bulkEditField: {
+        flex: 1,
+        minWidth: 120,
+    },
+    bulkEditActions: {
+        flexDirection: 'row',
+        gap: 8,
+        flexWrap: 'wrap',
+        alignItems: 'center',
+    },
+    bulkEditApplyButton: {
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        alignItems: 'center',
+        backgroundColor: '#1976d2',
+    },
+    bulkEditApplyButtonDisabled: {
+        backgroundColor: '#9ebfe4',
+    },
+    bulkEditApplyButtonText: {
+        color: '#fff',
+        fontWeight: '700',
+    },
+    bulkEditErrorText: {
+        fontSize: 12,
+        color: '#b71c1c',
+        marginTop: 8,
+    },
     buttonPrimary: {
         flex: 1,
         backgroundColor: '#1976d2',
@@ -3681,11 +4190,67 @@ const styles = StyleSheet.create({
         marginBottom: 8,
         backgroundColor: '#fff',
     },
+    selectionColumnGuideRow: {
+        marginLeft: 10,
+        marginBottom: 8,
+    },
+    selectionColumnMaster: {
+        width: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+    },
+    selectionColumnMasterLabel: {
+        fontSize: 10,
+        color: '#4f6280',
+        fontWeight: '600',
+        textAlign: 'center',
+    },
+    cardRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    cardSelectionColumn: {
+        width: 28,
+        alignItems: 'center',
+        paddingTop: 2,
+    },
+    cardMainColumn: {
+        flex: 1,
+    },
     cardTopRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: 8,
         marginBottom: 6,
+    },
+    cardSelectionToggle: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 22,
+    },
+    cardSelectionCheckbox: {
+        width: 20,
+        height: 20,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: '#9fb4cc',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#fff',
+    },
+    cardSelectionCheckboxActive: {
+        borderColor: '#1976d2',
+        backgroundColor: '#eef5ff',
+    },
+    cardSelectionCheckboxText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#90a4b8',
+        lineHeight: 12,
+    },
+    cardSelectionCheckboxTextActive: {
+        color: '#1976d2',
     },
     code: {
         fontWeight: '700',
@@ -4064,4 +4629,22 @@ const styles = StyleSheet.create({
         marginTop: 4,
         marginBottom: 6,
     },
+    stepperButtonMini: {
+        width: 28,
+        height: 30,
+    },
+
+    inputMiniStepper: {
+        flex: 1,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        paddingHorizontal: 6,
+        paddingVertical: 6,
+        backgroundColor: '#fff',
+        fontSize: 12,
+        textAlign: 'center',
+    },
 });
+
+

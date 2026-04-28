@@ -27,6 +27,7 @@
     "auto": "auto",
     "leadTimeBasis": "Underlag ledtid",
     "safetyBasis": "Underlag säkerhet",
+    "orderCycleBasis": "Underlag intervall",
     "targetLevel": "Målnivå",
     "reorderDecisionCannotCalculate": "Kan inte beräkna sista beställningsdag.",
     "reorderDecisionOrderNowPastDate": "Beställ nu. Sista beställningsdag var {{date}}.",
@@ -529,6 +530,7 @@
     "reorderAssist.overrides": "Överstyrningar (per artikel)",
     "reorderAssist.leadTime": "Ledtid (dagar)",
     "reorderAssist.safetyDays": "Säkerhetsdagar",
+    "reorderAssist.orderCycleDays": "Beställningsintervall",
     "reorderAssist.targetCover": "Måltäcktid (dagar)",
     "reorderAssist.legend.posHit": "Grön chip: matchar resultat",
     "reorderAssist.legend.posMiss": "Blå chip: ingen träff",
@@ -674,6 +676,15 @@
     "reorderAssist.loadingArticleInfo": "Laddar produkttext...",
     "reorderAssist.loadingSupplierInfo": "Laddar leverantör...",
     "reorderAssist.loadingWebshopStatus": "Kontrollerar webbshopsstatus...",
+    "reorderAssist.bulkEditTitle": "Massuppdatera filtrerad lista",
+    "reorderAssist.bulkEditHint": "Om inga produkter är markerade uppdateras alla {{count}} produkter som visas i listan.",
+    "reorderAssist.bulkEditApply": "Uppdatera {{count}} produkter",
+    "reorderAssist.bulkEditError": "Ange ett giltigt tal eller lämna fältet tomt.",
+    "reorderAssist.bulkEditSelectedHint": "Uppdaterar {{count}} markerade produkter i listan.",
+    "reorderAssist.bulkEditSelectedCount": "Markerade produkter: {{count}}",
+    "reorderAssist.bulkEditSelectAll": "Markera alla",
+    "reorderAssist.bulkEditDeselectAll": "Avmarkera alla",
+    "reorderAssist.bulkEditSelectArticle": "Massuppdatera",
     "reorderAssist.matchingDelivery": "Matchande leverans",
 
     "columns.stockQtyVisma": "Saldo (Visma)",
@@ -705,4 +716,5 @@
     "reorderAssist.help.formulas": "Underlag ledtid = f\u00f6rbrukning per dag \u00d7 ledtid. Underlag s\u00e4kerhet = f\u00f6rbrukning per dag \u00d7 s\u00e4kerhetsdagar. M\u00e5lniv\u00e5 = summan av dessa.",
     "reorderAssist.help.history": "Senaste best\u00e4llningar visar tidigare ink\u00f6p f\u00f6r artikeln. Matchande leverans h\u00e4mtar f\u00f6ljesedeln som verkar h\u00f6ra ihop med ett visst ordernummer n\u00e4r du ber om den."
 }
+
 
