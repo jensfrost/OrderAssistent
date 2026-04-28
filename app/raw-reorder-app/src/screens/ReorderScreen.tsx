@@ -64,6 +64,10 @@ type ProductSettingsMap = Record<
 type AutoLeadTimeMap = Record<string, number>;
 type WebshopFilter = 'ALL' | 'WEBSHOP_ONLY';
 type StatusFilterValue = 'OK' | 'WATCH' | 'ORDER';
+type SupplierFilterOption = {
+    value: string;
+    label: string;
+};
 type ResolvedArticleMap = Record<string, true>;
 type LoadingArticleMap = Record<string, boolean>;
 type ErrorByArticleMap = Record<string, string>;
@@ -137,7 +141,9 @@ type ReorderAssistPersistedSettings = {
     leadTimeTimeoutMs?: string;
     showAdvancedLeadtime?: boolean;
     search?: string;
+    searchTerms?: string[];
     statusFilter?: 'ALL' | StatusFilterValue | StatusFilterValue[];
+    selectedSuppliers?: string[];
     webshopFilter?: WebshopFilter;
     sortBy?: SortBy;
     productSettings?: ProductSettingsMap;
@@ -172,6 +178,23 @@ function LabelWithHelp({
         <View style={styles.labelRow}>
             <Text style={styles.labelInline}>{label}</Text>
             <HelpIconButton onPress={onPress} />
+        </View>
+    );
+}
+
+function ActiveFilterChip({
+    label,
+    onRemove,
+}: {
+    label: string;
+    onRemove: () => void;
+}) {
+    return (
+        <View style={styles.activeFilterChip}>
+            <Text style={styles.activeFilterChipText}>{label}</Text>
+            <TouchableOpacity style={styles.activeFilterChipRemove} onPress={onRemove}>
+                <Text style={styles.activeFilterChipRemoveText}>x</Text>
+            </TouchableOpacity>
         </View>
     );
 }
@@ -524,12 +547,91 @@ function normalizeBooleanLike(value: unknown): boolean {
     return ['1', '-1', 'true', 'y', 'yes', 'j', 'ja', 't', 'x'].includes(normalized);
 }
 
+function normalizeSearchText(value: unknown): string {
+    return String(value ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase();
+}
+
+function mergeSearchTerms(existing: string[], incoming: string[]): string[] {
+    const next: string[] = [];
+    const seen = new Set<string>();
+
+    const push = (value: unknown) => {
+        const raw = String(value ?? '').trim();
+        const normalized = normalizeSearchText(raw);
+        if (!normalized || seen.has(normalized)) return;
+
+        seen.add(normalized);
+        next.push(raw);
+    };
+
+    existing.forEach(push);
+    incoming.forEach(push);
+
+    return next;
+}
+
+function splitCommittedSearchInput(value: string): { completedTerms: string[]; remainder: string } {
+    const raw = String(value ?? '');
+    if (!/[,\n;]/.test(raw)) {
+        return {
+            completedTerms: [],
+            remainder: raw,
+        };
+    }
+
+    const parts = raw.split(/[\n,;]+/);
+    const endsWithDelimiter = /[,\n;]\s*$/.test(raw);
+    const completedTerms = (endsWithDelimiter ? parts : parts.slice(0, -1))
+        .map((part) => part.trim())
+        .filter(Boolean);
+    const remainder = endsWithDelimiter ? '' : String(parts[parts.length - 1] ?? '').trimStart();
+
+    return {
+        completedTerms,
+        remainder,
+    };
+}
+
+function normalizeSupplierNumber(value: unknown): string {
+    const raw = String(value ?? '').trim().toUpperCase();
+    if (!raw) return '';
+
+    const numericCandidate = raw.replace(',', '.');
+    if (/^\d+(?:\.0+)?$/.test(numericCandidate)) {
+        const numericValue = Number(numericCandidate);
+        if (Number.isFinite(numericValue)) {
+            return String(Math.trunc(numericValue));
+        }
+    }
+
+    return raw;
+}
+
 function isWebshopArticle(articleInfo?: ExtendedArticle): boolean {
     const value =
         articleInfo?.adk_article_webshop ??
         articleInfo?.raw?.data?.adk_article_webshop;
 
     return normalizeBooleanLike(value);
+}
+
+function getSupplierFilterValue(item: Pick<AssistantRow, 'supplier' | 'supplierNumber'>): string {
+    return normalizeSupplierNumber(item.supplierNumber);
+}
+
+function getSupplierFilterLabel(item: Pick<AssistantRow, 'supplier' | 'supplierNumber'>): string {
+    const supplierName = String(item.supplier ?? '').trim();
+    const supplierNumber = String(item.supplierNumber ?? '').trim();
+
+    if (supplierName && supplierNumber && supplierName !== supplierNumber) {
+        return `${supplierName} (${supplierNumber})`;
+    }
+
+    return supplierName || supplierNumber;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -654,7 +756,7 @@ function buildAssistantRows(
 
     const supplierMap = new Map<string, Supplier>();
     for (const row of supplierRows) {
-        const supplierNumber = String(row.supplierNumber ?? '').trim();
+        const supplierNumber = normalizeSupplierNumber(row.supplierNumber);
         if (supplierNumber) supplierMap.set(supplierNumber, row);
     }
 
@@ -673,12 +775,14 @@ function buildAssistantRows(
                 ''
             ).trim();
 
-            const supplierNumber = String(
+            const supplierNumberRaw = String(
+                row.supplierNumber ??
                 (articleInfo as any)?.adk_article_supplier_number ??
                 articleInfo?.raw?.data?.adk_article_supplier_number ??
                 articleInfo?.LEVNR ??
                 ''
             ).trim();
+            const supplierNumber = normalizeSupplierNumber(supplierNumberRaw);
 
             const supplierInfo = supplierMap.get(supplierNumber);
             const supplier = String(supplierInfo?.supplierName ?? supplierNumber ?? '').trim();
@@ -962,14 +1066,20 @@ type ReorderHeaderProps = {
     showAdvancedLeadtime: boolean;
     setShowAdvancedLeadtime: React.Dispatch<React.SetStateAction<boolean>>;
 
-    search: string;
-    setSearch: (value: string) => void;
+    searchInput: string;
+    setSearchInput: (value: string) => void;
+    searchTerms: string[];
+    setSearchTerms: React.Dispatch<React.SetStateAction<string[]>>;
 
     sortBy: SortBy;
     setSortBy: (value: SortBy) => void;
 
     statusFilter: StatusFilterValue[];
     setStatusFilter: React.Dispatch<React.SetStateAction<StatusFilterValue[]>>;
+
+    selectedSuppliers: string[];
+    setSelectedSuppliers: React.Dispatch<React.SetStateAction<string[]>>;
+    supplierFilterOptions: SupplierFilterOption[];
 
     webshopFilter: WebshopFilter;
     setWebshopFilter: (value: WebshopFilter) => void;
@@ -982,6 +1092,7 @@ type ReorderHeaderProps = {
     error: string | null;
     loadingLeadTimes: boolean;
     loadingStock: boolean;
+    loadingSuppliers: boolean;
     leadTimeProgress: { processed: number; total: number };
     history: StockHistoryResponse | null;
 
@@ -1017,12 +1128,17 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         setLeadTimeTimeoutMs,
         showAdvancedLeadtime,
         setShowAdvancedLeadtime,
-        search,
-        setSearch,
+        searchInput,
+        setSearchInput,
+        searchTerms,
+        setSearchTerms,
         sortBy,
         setSortBy,
         statusFilter,
         setStatusFilter,
+        selectedSuppliers,
+        setSelectedSuppliers,
+        supplierFilterOptions,
         webshopFilter,
         setWebshopFilter,
         handleFetch,
@@ -1032,10 +1148,81 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         error,
         loadingLeadTimes,
         loadingStock,
+        loadingSuppliers,
         leadTimeProgress,
         history,
         onExportCsv,
     } = props;
+
+    const [showSupplierModal, setShowSupplierModal] = useState(false);
+    const [supplierSearch, setSupplierSearch] = useState('');
+
+    const supplierLabelByValue = useMemo(
+        () => new Map(supplierFilterOptions.map((option) => [option.value, option.label])),
+        [supplierFilterOptions]
+    );
+
+    const selectedSupplierSummary = useMemo(() => {
+        if (selectedSuppliers.length === 0) {
+            return t('common.all');
+        }
+
+        const labels = selectedSuppliers.map((value) => supplierLabelByValue.get(value) || value);
+        if (labels.length <= 2) {
+            return labels.join(', ');
+        }
+
+        return `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
+    }, [selectedSuppliers, supplierLabelByValue, t]);
+
+    const filteredSupplierOptions = useMemo(() => {
+        const query = normalizeSearchText(supplierSearch);
+        if (!query) return supplierFilterOptions;
+
+        return supplierFilterOptions.filter((option) => {
+            const haystacks = [
+                normalizeSearchText(option.label),
+                normalizeSearchText(option.value),
+            ];
+
+            return haystacks.some((value) => value.includes(query));
+        });
+    }, [supplierFilterOptions, supplierSearch]);
+
+    const canOpenSupplierModal =
+        supplierFilterOptions.length > 0 || selectedSuppliers.length > 0;
+
+    const supplierSelectText =
+        selectedSuppliers.length > 0
+            ? selectedSupplierSummary
+            : loadingSuppliers && supplierFilterOptions.length === 0
+                ? t('reorderAssist.loadingSupplierInfo')
+                : supplierFilterOptions.length === 0
+                    ? t('common.noData')
+                    : selectedSupplierSummary;
+
+    const handleSearchInputChange = (value: string) => {
+        const { completedTerms, remainder } = splitCommittedSearchInput(value);
+        if (completedTerms.length > 0) {
+            setSearchTerms((prev) => mergeSearchTerms(prev, completedTerms));
+            setSearchInput(remainder);
+            return;
+        }
+
+        setSearchInput(value);
+    };
+
+    const commitSearchInput = () => {
+        const terms = String(searchInput ?? '')
+            .split(/[\n,;]+/)
+            .map((value) => value.trim())
+            .filter(Boolean);
+
+        if (!terms.length) return;
+
+        setSearchTerms((prev) => mergeSearchTerms(prev, terms));
+        setSearchInput('');
+    };
 
     return (
         <>
@@ -1048,11 +1235,73 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                             onPress={() => onOpenHelp('search')}
                         />
                         <TextInput
-                            value={search}
-                            onChangeText={setSearch}
+                            value={searchInput}
+                            onChangeText={handleSearchInputChange}
+                            onSubmitEditing={commitSearchInput}
+                            onBlur={commitSearchInput}
                             placeholder={t('searchPlaceholder')}
                             style={styles.inputCompact}
+                            returnKeyType="done"
                         />
+                        {searchTerms.length > 0 ? (
+                            <View style={styles.activeChipRow}>
+                                {searchTerms.map((term) => (
+                                    <ActiveFilterChip
+                                        key={`search-chip-${term}`}
+                                        label={term}
+                                        onRemove={() =>
+                                            setSearchTerms((prev) =>
+                                                prev.filter(
+                                                    (item) =>
+                                                        normalizeSearchText(item) !==
+                                                        normalizeSearchText(term)
+                                                )
+                                            )
+                                        }
+                                    />
+                                ))}
+                            </View>
+                        ) : null}
+                    </View>
+                </View>
+
+                <View style={styles.row}>
+                    <View style={styles.fieldHalf}>
+                        <Text style={styles.label}>{t('supplier')}</Text>
+                        <TouchableOpacity
+                            style={styles.selectFieldButton}
+                            onPress={() => {
+                                if (canOpenSupplierModal) {
+                                    setShowSupplierModal(true);
+                                }
+                            }}
+                            disabled={!canOpenSupplierModal}
+                        >
+                            <Text
+                                style={[
+                                    styles.selectFieldText,
+                                    selectedSuppliers.length === 0 && styles.selectFieldPlaceholder,
+                                ]}
+                                numberOfLines={2}
+                            >
+                                {supplierSelectText}
+                            </Text>
+                        </TouchableOpacity>
+                        {selectedSuppliers.length > 0 ? (
+                            <View style={styles.activeChipRow}>
+                                {selectedSuppliers.map((value) => (
+                                    <ActiveFilterChip
+                                        key={`supplier-chip-${value}`}
+                                        label={supplierLabelByValue.get(value) || value}
+                                        onRemove={() =>
+                                            setSelectedSuppliers((prev) =>
+                                                prev.filter((item) => item !== value)
+                                            )
+                                        }
+                                    />
+                                ))}
+                            </View>
+                        ) : null}
                     </View>
                 </View>
 
@@ -1508,6 +1757,114 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                     </View>
                 </View>
             </View>
+
+            <Modal
+                visible={showSupplierModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => {
+                    setShowSupplierModal(false);
+                    setSupplierSearch('');
+                }}
+            >
+                <View style={styles.helpModalOverlay}>
+                    <View style={styles.helpModalCard}>
+                        <View style={styles.helpModalHeader}>
+                            <Text style={styles.helpModalTitle}>{t('supplier')}</Text>
+                            <TouchableOpacity
+                                style={styles.helpModalCloseButton}
+                                onPress={() => {
+                                    setShowSupplierModal(false);
+                                    setSupplierSearch('');
+                                }}
+                            >
+                                <Text style={styles.helpModalCloseButtonText}>{t('common.close')}</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <TextInput
+                            value={supplierSearch}
+                            onChangeText={setSupplierSearch}
+                            placeholder={t('common.searchShort')}
+                            style={styles.inputCompact}
+                        />
+
+                        <View style={styles.modalActionRow}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.filterChip,
+                                    selectedSuppliers.length === 0 && styles.filterChipActive,
+                                ]}
+                                onPress={() => setSelectedSuppliers([])}
+                            >
+                                <Text
+                                    style={[
+                                        styles.filterChipText,
+                                        selectedSuppliers.length === 0 && styles.filterChipTextActive,
+                                    ]}
+                                >
+                                    {t('common.all')}
+                                </Text>
+                            </TouchableOpacity>
+
+                            {selectedSuppliers.length > 0 ? (
+                                <TouchableOpacity
+                                    style={styles.filterChip}
+                                    onPress={() => setSelectedSuppliers([])}
+                                >
+                                    <Text style={styles.filterChipText}>{t('common.clear')}</Text>
+                                </TouchableOpacity>
+                            ) : null}
+                        </View>
+
+                        <FlatList
+                            data={filteredSupplierOptions}
+                            keyExtractor={(item) => item.value}
+                            keyboardShouldPersistTaps="handled"
+                            style={styles.supplierModalList}
+                            ListEmptyComponent={
+                                <Text style={styles.metricMuted}>{t('common.noResults')}</Text>
+                            }
+                            renderItem={({ item }) => {
+                                const isActive = selectedSuppliers.includes(item.value);
+
+                                return (
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.supplierOptionRow,
+                                            isActive && styles.supplierOptionRowActive,
+                                        ]}
+                                        onPress={() => {
+                                            setSelectedSuppliers((prev) =>
+                                                prev.includes(item.value)
+                                                    ? prev.filter((value) => value !== item.value)
+                                                    : [...prev, item.value]
+                                            );
+                                        }}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.supplierOptionCheck,
+                                                isActive && styles.supplierOptionCheckActive,
+                                            ]}
+                                        >
+                                            {isActive ? 'x' : 'o'}
+                                        </Text>
+                                        <Text
+                                            style={[
+                                                styles.supplierOptionText,
+                                                isActive && styles.supplierOptionTextActive,
+                                            ]}
+                                        >
+                                            {item.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            }}
+                        />
+                    </View>
+                </View>
+            </Modal>
         </>
     );
 });
@@ -1545,8 +1902,10 @@ export default function ReorderScreen() {
         [helpTopic, t]
     );
 
-    const [search, setSearch] = useState('');
+    const [searchInput, setSearchInput] = useState('');
+    const [searchTerms, setSearchTerms] = useState<string[]>([]);
     const [statusFilter, setStatusFilter] = useState<StatusFilterValue[]>([]);
+    const [selectedSuppliers, setSelectedSuppliers] = useState<string[]>([]);
     const [webshopFilter, setWebshopFilter] = useState<WebshopFilter>('ALL');
     const [sortBy, setSortBy] = useState<SortBy>('article');
 
@@ -1597,6 +1956,35 @@ export default function ReorderScreen() {
     useEffect(() => {
         let cancelled = false;
 
+        const loadSuppliers = async () => {
+            setLoadingSuppliers(true);
+
+            try {
+                const data = await fetchSuppliers();
+                if (cancelled) return;
+
+                log('[Init] suppliers loaded', Array.isArray(data) ? data.length : data);
+                setSuppliers(Array.isArray(data) ? data : []);
+            } catch (err) {
+                if (cancelled) return;
+                warn('[Init] suppliers failed', err);
+            } finally {
+                if (!cancelled) {
+                    setLoadingSuppliers(false);
+                }
+            }
+        };
+
+        void loadSuppliers();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
         const loadPersistedSettings = async () => {
             try {
                 const raw = await AsyncStorage.getItem(REORDER_ASSIST_SETTINGS_STORAGE_KEY);
@@ -1639,7 +2027,17 @@ export default function ReorderScreen() {
                     setShowAdvancedLeadtime(parsed.showAdvancedLeadtime);
                 }
                 if (typeof parsed.search === 'string') {
-                    setSearch(parsed.search);
+                    setSearchInput(parsed.search);
+                }
+                if (Array.isArray(parsed.searchTerms)) {
+                    setSearchTerms(
+                        mergeSearchTerms(
+                            [],
+                            parsed.searchTerms.filter(
+                                (value): value is string => typeof value === 'string'
+                            )
+                        )
+                    );
                 }
                 if (parsed.statusFilter === 'ALL') {
                     setStatusFilter([]);
@@ -1655,6 +2053,29 @@ export default function ReorderScreen() {
                             value === 'OK' || value === 'WATCH' || value === 'ORDER'
                     );
                     setStatusFilter(next);
+                }
+                if (Array.isArray(parsed.selectedSuppliers)) {
+                    setSelectedSuppliers(
+                        Array.from(
+                            new Set(
+                                parsed.selectedSuppliers
+                                    .filter((value): value is string => typeof value === 'string')
+                                    .map((value) => {
+                                        const trimmed = value.trim();
+                                        if (trimmed.toLowerCase().startsWith('number:')) {
+                                            return normalizeSupplierNumber(
+                                                trimmed.slice('number:'.length).trim()
+                                            );
+                                        }
+                                        if (trimmed.toLowerCase().startsWith('name:')) {
+                                            return '';
+                                        }
+                                        return normalizeSupplierNumber(trimmed);
+                                    })
+                                    .filter(Boolean)
+                            )
+                        )
+                    );
                 }
                 if (parsed.webshopFilter === 'ALL' || parsed.webshopFilter === 'WEBSHOP_ONLY') {
                     setWebshopFilter(parsed.webshopFilter);
@@ -1701,8 +2122,10 @@ export default function ReorderScreen() {
             maxDeliveryHeads,
             leadTimeTimeoutMs,
             showAdvancedLeadtime,
-            search,
+            search: searchInput,
+            searchTerms,
             statusFilter: statusFilter.length === 0 ? 'ALL' : statusFilter,
+            selectedSuppliers,
             webshopFilter,
             sortBy,
             productSettings,
@@ -1728,8 +2151,10 @@ export default function ReorderScreen() {
         maxDeliveryHeads,
         leadTimeTimeoutMs,
         showAdvancedLeadtime,
-        search,
+        searchInput,
+        searchTerms,
         statusFilter,
+        selectedSuppliers,
         webshopFilter,
         sortBy,
         productSettings,
@@ -1780,21 +2205,79 @@ export default function ReorderScreen() {
         packSize,
     ]);
 
+    const supplierFilterOptions = useMemo(() => {
+        const uniqueSuppliers = new Map<string, SupplierFilterOption>();
+
+        for (const row of suppliers) {
+            const supplier = {
+                supplier: row.supplierName,
+                supplierNumber: row.supplierNumber,
+            };
+            const value = getSupplierFilterValue(supplier);
+            if (!value || uniqueSuppliers.has(value)) continue;
+
+            uniqueSuppliers.set(value, {
+                value,
+                label: getSupplierFilterLabel(supplier) || value,
+            });
+        }
+
+        for (const row of reorderRows) {
+            const value = getSupplierFilterValue(row);
+            if (!value || uniqueSuppliers.has(value)) continue;
+
+            uniqueSuppliers.set(value, {
+                value,
+                label: getSupplierFilterLabel(row) || value,
+            });
+        }
+
+        return Array.from(uniqueSuppliers.values()).sort((a, b) =>
+            a.label.localeCompare(b.label, undefined, { numeric: true })
+        );
+    }, [suppliers, reorderRows]);
+
     const filteredRows = useMemo(() => {
-        const q = String(search ?? '').trim().toLowerCase();
+        const activeSearchTerms = mergeSearchTerms(searchTerms, [searchInput])
+            .map((value) => normalizeSearchText(value))
+            .filter(Boolean);
+        const normalizedSelectedSuppliers = selectedSuppliers
+            .map((value) => normalizeSupplierNumber(value))
+            .filter(Boolean);
+        const fetchedSupplierScope = new Set(
+            (history?.debug?.supplier_numbers ?? [])
+                .map((value) => normalizeSupplierNumber(value))
+                .filter(Boolean)
+        );
+        const hasMatchingFetchedSupplierScope =
+            normalizedSelectedSuppliers.length > 0 &&
+            normalizedSelectedSuppliers.length === fetchedSupplierScope.size &&
+            normalizedSelectedSuppliers.every((value) => fetchedSupplierScope.has(value));
 
         let result = reorderRows.filter((row) => {
+            const haystacks = [
+                normalizeSearchText(row.article),
+                normalizeSearchText(row.title),
+                normalizeSearchText(row.supplier || ''),
+                normalizeSearchText(row.supplierNumber || ''),
+            ];
             const matchesSearch =
-                q.length === 0 ||
-                row.article.toLowerCase().includes(q) ||
-                row.title.toLowerCase().includes(q) ||
-                (row.supplier || '').toLowerCase().includes(q) ||
-                (row.supplierNumber || '').toLowerCase().includes(q);
+                activeSearchTerms.length === 0 ||
+                activeSearchTerms.some((term) =>
+                    haystacks.some((value) => value.includes(term))
+                );
 
             const matchesStatus = statusFilter.length === 0 ? true : statusFilter.includes(row.status);
+            const rowSupplierValue = getSupplierFilterValue(row);
+            const matchesSupplier =
+                normalizedSelectedSuppliers.length === 0
+                    ? true
+                    : rowSupplierValue
+                        ? normalizedSelectedSuppliers.includes(rowSupplierValue)
+                        : loadingArticles || hasMatchingFetchedSupplierScope;
             const matchesWebshop = webshopFilter === 'ALL' ? true : row.isWebshopArticle === true;
 
-            return matchesSearch && matchesStatus && matchesWebshop;
+            return matchesSearch && matchesStatus && matchesSupplier && matchesWebshop;
         });
 
         result = [...result].sort((a, b) => {
@@ -1821,7 +2304,7 @@ export default function ReorderScreen() {
         });
 
         return result;
-    }, [reorderRows, search, statusFilter, webshopFilter, sortBy]);
+    }, [history, reorderRows, searchInput, searchTerms, statusFilter, selectedSuppliers, webshopFilter, sortBy, loadingArticles]);
 
     const fetchVisibleHistory = async (
         articlesToFetch: string[],
@@ -2016,7 +2499,7 @@ export default function ReorderScreen() {
             );
 
             const suggested = result?.suggested_lead_time_days;
-            if (Number.isFinite(suggested) && suggested >= 0) {
+            if (typeof suggested === 'number' && Number.isFinite(suggested) && suggested >= 0) {
                 setAutoLeadTimes((prev) => ({
                     ...prev,
                     [normalizedArticle]: suggested,
@@ -2130,13 +2613,11 @@ export default function ReorderScreen() {
             setLoadingLeadTimes(false);
             setLoadingStock(false);
             setLoadingArticles(false);
-            setLoadingSuppliers(false);
             setLeadTimeProgress({ processed: 0, total: 0 });
             setHistory(null);
             setStock({ rows: [] });
             setResolvedStockArticles({});
             setArticles([]);
-            setSuppliers([]);
             setAutoLeadTimes({});
             setLoadingAutoLeadTimeArticles({});
             setAutoLeadTimeErrors({});
@@ -2157,7 +2638,11 @@ export default function ReorderScreen() {
             if (fetchRunRef.current !== runId) return;
 
             const historyData = await withTimeout(
-                fetchOrderAssistStockHistory({ from, to }),
+                fetchOrderAssistStockHistory({
+                    from,
+                    to,
+                    supplier_numbers: selectedSuppliers,
+                }),
                 300000
             );
 
@@ -2413,12 +2898,17 @@ export default function ReorderScreen() {
                         setLeadTimeTimeoutMs={setLeadTimeTimeoutMs}
                         showAdvancedLeadtime={showAdvancedLeadtime}
                         setShowAdvancedLeadtime={setShowAdvancedLeadtime}
-                        search={search}
-                        setSearch={setSearch}
+                        searchInput={searchInput}
+                        setSearchInput={setSearchInput}
+                        searchTerms={searchTerms}
+                        setSearchTerms={setSearchTerms}
                         sortBy={sortBy}
                         setSortBy={setSortBy}
                         statusFilter={statusFilter}
                         setStatusFilter={setStatusFilter}
+                        selectedSuppliers={selectedSuppliers}
+                        setSelectedSuppliers={setSelectedSuppliers}
+                        supplierFilterOptions={supplierFilterOptions}
                         webshopFilter={webshopFilter}
                         setWebshopFilter={setWebshopFilter}
                         handleFetch={handleFetch}
@@ -2428,6 +2918,7 @@ export default function ReorderScreen() {
                         error={error}
                         loadingLeadTimes={loadingLeadTimes}
                         loadingStock={loadingStock}
+                        loadingSuppliers={loadingSuppliers}
                         leadTimeProgress={leadTimeProgress}
                         history={history}
                         onExportCsv={handleExportCsv}
@@ -3009,6 +3500,62 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         fontSize: 13,
     },
+    selectFieldButton: {
+        minHeight: 42,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        backgroundColor: '#fff',
+        justifyContent: 'center',
+    },
+    selectFieldText: {
+        fontSize: 13,
+        color: '#222',
+    },
+    selectFieldPlaceholder: {
+        color: '#666',
+    },
+    activeChipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 8,
+    },
+    activeFilterChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        maxWidth: '100%',
+        paddingLeft: 10,
+        paddingRight: 6,
+        paddingVertical: 6,
+        borderWidth: 1,
+        borderColor: '#b7d4f5',
+        borderRadius: 999,
+        backgroundColor: '#eef5ff',
+    },
+    activeFilterChipText: {
+        flexShrink: 1,
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#0f4fa8',
+    },
+    activeFilterChipRemove: {
+        width: 18,
+        height: 18,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#d8e9ff',
+    },
+    activeFilterChipRemoveText: {
+        fontSize: 11,
+        fontWeight: '700',
+        lineHeight: 12,
+        color: '#0f4fa8',
+    },
     inputCompactStepper: {
         flex: 1,
         borderWidth: 1,
@@ -3394,6 +3941,52 @@ const styles = StyleSheet.create({
         lineHeight: 20,
         fontWeight: '700',
         color: '#1976d2',
+    },
+    modalActionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 10,
+        marginBottom: 10,
+    },
+    supplierModalList: {
+        minHeight: 120,
+        maxHeight: 360,
+    },
+    supplierOptionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        borderRadius: 8,
+        backgroundColor: '#fff',
+        marginBottom: 8,
+    },
+    supplierOptionRowActive: {
+        borderColor: '#1976d2',
+        backgroundColor: '#eef5ff',
+    },
+    supplierOptionCheck: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#777',
+        width: 16,
+        textAlign: 'center',
+    },
+    supplierOptionCheckActive: {
+        color: '#1976d2',
+    },
+    supplierOptionText: {
+        flex: 1,
+        fontSize: 13,
+        color: '#222',
+    },
+    supplierOptionTextActive: {
+        color: '#0f4fa8',
+        fontWeight: '600',
     },
     historyBox: {
         marginTop: 8,

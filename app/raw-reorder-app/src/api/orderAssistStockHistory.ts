@@ -3,8 +3,11 @@ import { apiGet } from './client';
 
 export type StockHistoryRow = {
   article?: string;
+  unit?: string;
+  supplierNumber?: string | null;
   qty?: number;
   delivered_qty?: number;
+  totalOutQty?: number;
   date?: string;
   doc_no?: string | number;
 };
@@ -18,6 +21,9 @@ export type StockHistoryResponse = {
     date_field?: string;
     visma_filter_field?: string;
     date_filter?: string;
+    article_filter?: string | null;
+    supplier_numbers?: string[];
+    supplier_article_count?: number;
     scanned_docs?: number;
     matched_docs?: number;
     matched_rows?: number;
@@ -36,15 +42,28 @@ export type FetchStockHistoryParams = {
   to: string;
   article?: string;
   date_field?: string;
+  supplier_numbers?: string[];
 };
 
 export function fetchOrderAssistStockHistory(params: FetchStockHistoryParams) {
-  const query = new URLSearchParams({
-    from: params.from,
-    to: params.to,
-    ...(params.article ? { article: params.article } : {}),
-    ...(params.date_field ? { date_field: params.date_field } : {}),
-  });
+  const query = new URLSearchParams();
+  query.set('from', params.from);
+  query.set('to', params.to);
+
+  if (params.article) {
+    query.set('article', params.article);
+  }
+
+  if (params.date_field) {
+    query.set('date_field', params.date_field);
+  }
+
+  for (const supplierNumber of params.supplier_numbers ?? []) {
+    const value = String(supplierNumber ?? '').trim();
+    if (value) {
+      query.append('supplier_numbers', value);
+    }
+  }
 
   return apiGet<StockHistoryResponse>(`order_assist_stock_history/usage?${query.toString()}`);
 }

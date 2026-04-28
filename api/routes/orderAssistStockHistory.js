@@ -10,6 +10,11 @@ router.get('/usage', async (req, res) => {
   console.log('[HIT] Node /api/order_assist_stock_history/usage', req.query);
   try {
     const { from, to, article, date_field } = req.query;
+    const supplierNumbers = Array.isArray(req.query.supplier_numbers)
+      ? req.query.supplier_numbers
+      : req.query.supplier_numbers
+        ? [req.query.supplier_numbers]
+        : [];
 
     if (!VISMA_API_BASE) {
       return res.status(500).json({ error: 'VISMA_API_BASE is not set' });
@@ -19,10 +24,22 @@ router.get('/usage', async (req, res) => {
       return res.status(400).json({ error: "Missing required query params: 'from' and 'to'" });
     }
 
-    const r = await axios.get(`${VISMA_API_BASE}/visma/order_assist_stock_history/usage`, {
-      params: { from, to, article, date_field },
-      timeout: 600000,
-    });
+    const params = new URLSearchParams();
+    params.set('from', String(from));
+    params.set('to', String(to));
+    if (article) params.set('article', String(article));
+    if (date_field) params.set('date_field', String(date_field));
+    for (const supplierNumber of supplierNumbers) {
+      const value = String(supplierNumber ?? '').trim();
+      if (value) {
+        params.append('supplier_numbers', value);
+      }
+    }
+
+    const r = await axios.get(
+      `${VISMA_API_BASE}/visma/order_assist_stock_history/usage?${params.toString()}`,
+      { timeout: 600000 }
+    );
 
     res.json(r.data);
   } catch (e) {
