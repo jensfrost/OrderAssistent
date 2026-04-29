@@ -1,0 +1,10 @@
+﻿{
+    "env":  "dev",
+    "versionName":  "1.0.24-dev",
+    "versionCode":  24,
+    "apkUrl":  "/downloads/dev/orderassistent-dev-latest.apk",
+    "file":  "/downloads/dev/orderassistent-dev-1.0.24-dev-vc24.apk",
+    "sha256":  "65e0edfd8f8ae84e6fbdce878bd87941d10c3a295ef0f275bffa5a2d5a06d3fd",
+    "notes":  "Automatic post-build dev",
+    "date":  "2026-04-29T09:01:09"
+}

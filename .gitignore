@@ -46,16 +46,18 @@ app/HundapoteketApp/web/downloads/
 # ─────────────────────────────
 
 # OrderAssistent (DIN APP)
-app/raw-reorder-app/public/downloads/**/*.apk
-app/raw-reorder-app/public/downloads/**/*.apk.sha256
+# Ignorera ALLT i downloads rekursivt
+app/raw-reorder-app/public/downloads/**
 
-# Tillåt metadata (manifest etc)
+# Tillåt mappar
+!app/raw-reorder-app/public/downloads/
+!app/raw-reorder-app/public/downloads/dev/
+
+# Tillåt metadata
 !app/raw-reorder-app/public/downloads/**/*.json
 !app/raw-reorder-app/public/downloads/**/.gitkeep
 
-# Hundapoteket (om du fortfarande använder den)
-app/HundapoteketApp/downloads/**/*.apk
-app/HundapoteketApp/downloads/**/*.apk.sha256
+
 
 # ─────────────────────────────
 # Logs / runtime junk
