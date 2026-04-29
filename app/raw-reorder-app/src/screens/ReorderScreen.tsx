@@ -11,6 +11,7 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
+    useWindowDimensions,
     View,
 } from 'react-native';
 import ScreenContainer from '../components/ScreenContainer';
@@ -73,6 +74,8 @@ type SupplierFilterOption = {
 type ResolvedArticleMap = Record<string, true>;
 type LoadingArticleMap = Record<string, boolean>;
 type ErrorByArticleMap = Record<string, string>;
+type ExpandedInlineEditorMap = Record<string, true>;
+type ExpandedIncomingDeliveryMap = Record<string, true>;
 type RecentIncomingDebugMap = Record<
     string,
     {
@@ -177,13 +180,15 @@ function HelpIconButton({ onPress }: { onPress: () => void }) {
 function LabelWithHelp({
     label,
     onPress,
+    centered = false,
 }: {
     label: string;
     onPress: () => void;
+    centered?: boolean;
 }) {
     return (
-        <View style={styles.labelRow}>
-            <Text style={styles.labelInline}>{label}</Text>
+        <View style={[styles.labelRow, centered && styles.labelRowCentered]}>
+            <Text style={[styles.labelInline, centered && styles.labelInlineCentered]}>{label}</Text>
             <HelpIconButton onPress={onPress} />
         </View>
     );
@@ -207,7 +212,11 @@ function NumberStepperInput({
     return (
         <View style={styles.stepperRow}>
             <TouchableOpacity
-                style={[styles.stepperButton, compact && styles.stepperButtonMini]}
+                style={[
+                    styles.stepperButton,
+                    compact && styles.stepperButtonMini,
+                    styles.stepperButtonLeading,
+                ]}
                 onPress={() =>
                     onChangeText(adjustNumericString(value, -1, minValue, placeholder))
                 }
@@ -221,6 +230,7 @@ function NumberStepperInput({
                 keyboardType="numeric"
                 placeholder={placeholder}
                 style={[
+                    styles.stepperInputShared,
                     compact ? styles.inputMiniStepper : styles.inputCompactStepper,
                     invalid && styles.inputCompactInvalid,
                 ]}
@@ -1210,6 +1220,7 @@ type ReorderHeaderProps = {
 
     webshopFilter: WebshopFilter;
     setWebshopFilter: (value: WebshopFilter) => void;
+    compactLayout: boolean;
 
     handleFetch: () => void;
     loading: boolean;
@@ -1281,6 +1292,7 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         supplierFilterOptions,
         webshopFilter,
         setWebshopFilter,
+        compactLayout,
         handleFetch,
         loading,
         filteredRowsLength,
@@ -1306,6 +1318,7 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
     const [bulkSafetyDays, setBulkSafetyDays] = useState('');
     const [bulkOrderCycleDays, setBulkOrderCycleDays] = useState('');
     const [bulkPackSize, setBulkPackSize] = useState('');
+    const [showBulkEdit, setShowBulkEdit] = useState(false);
 
     const supplierLabelByValue = useMemo(
         () => new Map(supplierFilterOptions.map((option) => [option.value, option.label])),
@@ -1407,12 +1420,25 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
         });
     };
 
+    const responsiveFieldStyle = compactLayout
+        ? styles.responsiveFieldCompact
+        : styles.responsiveFieldExpanded;
+    const bulkEditFieldStyle = compactLayout
+        ? styles.bulkEditFieldCompact
+        : styles.bulkEditFieldExpanded;
+    const topFilterSingleFieldStyle = compactLayout
+        ? styles.fieldHalf
+        : styles.topFilterSingleFieldDesktop;
+    const topFilterPairFieldStyle = compactLayout
+        ? styles.fieldHalf
+        : styles.topFilterPairFieldDesktop;
+
     return (
         <>
             <View style={styles.filtersCompact}>
 
                 <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
+                    <View style={topFilterSingleFieldStyle}>
                         <LabelWithHelp
                             label={t('common.searchShort')}
                             onPress={() => onOpenHelp('search')}
@@ -1449,7 +1475,7 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                 </View>
 
                 <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
+                    <View style={topFilterSingleFieldStyle}>
                         <Text style={styles.label}>{t('supplier')}</Text>
                         <TouchableOpacity
                             style={styles.selectFieldButton}
@@ -1489,7 +1515,7 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                 </View>
 
                 <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
+                    <View style={topFilterPairFieldStyle}>
                         <Text style={styles.label}>{t('reorderAssist.dateFrom')}</Text>
                         {isWeb ? (
                             <TextInput
@@ -1504,7 +1530,7 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                             </TouchableOpacity>
                         )}
                     </View>
-                    <View style={styles.fieldHalf}>
+                    <View style={topFilterPairFieldStyle}>
                         <Text style={styles.label}>{t('reorderAssist.dateTo')}</Text>
                         {isWeb ? (
                             <TextInput
@@ -1521,96 +1547,47 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                     </View>
                 </View>
 
-                {isWeb ? (
-                    <View style={styles.row}>
-                        <View style={styles.fieldThird}>
-                            <LabelWithHelp
-                                label={t('reorderAssist.leadTime')}
-                                onPress={() => onOpenHelp('leadTime')}
-                            />
-
-                            <NumberStepperInput
-                                value={leadTimeDays}
-                                onChangeText={setLeadTimeDays}
-                                minValue={0}
-                            />
-
-                        </View>
-                        <View style={styles.fieldThird}>
-                            <LabelWithHelp
-                                label={t('reorderAssist.safetyDays')}
-                                onPress={() => onOpenHelp('safetyDays')}
-                            />
-
-                            <NumberStepperInput
-                                value={safetyDays}
-                                onChangeText={setSafetyDays}
-                                minValue={0}
-                            />
-
-                        </View>
-                        <View style={styles.fieldThird}>
-                            <LabelWithHelp
-                                label={t('raw.field.quantity')}
-                                onPress={() => onOpenHelp('packSize')}
-                            />
-
-                            <NumberStepperInput
-                                value={packSize}
-                                onChangeText={setPackSize}
-                                minValue={1}
-                            />
-
-                        </View>
+                <View style={styles.responsiveFieldsRow}>
+                    <View style={responsiveFieldStyle}>
+                        <LabelWithHelp
+                            label={t('reorderAssist.leadTime')}
+                            onPress={() => onOpenHelp('leadTime')}
+                            centered
+                        />
+                        <NumberStepperInput
+                            value={leadTimeDays}
+                            onChangeText={setLeadTimeDays}
+                            minValue={0}
+                        />
                     </View>
-                ) : (
-                    <>
-                        <View style={styles.row}>
-                            <View style={styles.fieldHalf}>
-                                <LabelWithHelp
-                                    label={t('reorderAssist.leadTime')}
-                                    onPress={() => onOpenHelp('leadTime')}
-                                />
-
-                                <NumberStepperInput
-                                    value={leadTimeDays}
-                                    onChangeText={setLeadTimeDays}
-                                    minValue={0}
-                                />
-
-                            </View>
-                        </View>
-                        <View style={styles.row}>
-                            <View style={styles.fieldHalf}>
-                                <LabelWithHelp
-                                    label={t('reorderAssist.safetyDays')}
-                                    onPress={() => onOpenHelp('safetyDays')}
-                                />
-                                    <NumberStepperInput
-                                        value={safetyDays}
-                                        onChangeText={setSafetyDays}
-                                        minValue={0}
-                                    />
-                            </View>
-                        </View>
-                        <View style={styles.row}>
-                            <View style={styles.fieldHalf}>
-                                <LabelWithHelp
-                                    label={t('raw.field.quantity')}
-                                    onPress={() => onOpenHelp('packSize')}
-                                />
-                                    <NumberStepperInput
-                                        value={packSize}
-                                        onChangeText={setPackSize}
-                                        minValue={1}
-                                    />
-                            </View>
-                        </View>
-                    </>
-                )}
-                <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('reorderAssist.orderCycleDays')}</Text>
+                    <View style={responsiveFieldStyle}>
+                        <LabelWithHelp
+                            label={t('reorderAssist.safetyDays')}
+                            onPress={() => onOpenHelp('safetyDays')}
+                            centered
+                        />
+                        <NumberStepperInput
+                            value={safetyDays}
+                            onChangeText={setSafetyDays}
+                            minValue={0}
+                        />
+                    </View>
+                    <View style={responsiveFieldStyle}>
+                        <LabelWithHelp
+                            label={t('raw.field.quantity')}
+                            onPress={() => onOpenHelp('packSize')}
+                            centered
+                        />
+                        <NumberStepperInput
+                            value={packSize}
+                            onChangeText={setPackSize}
+                            minValue={1}
+                        />
+                    </View>
+                    <View style={responsiveFieldStyle}>
+                        <Text style={[styles.label, styles.labelCentered]}>
+                            {t('reorderAssist.orderCycleDays')}
+                        </Text>
                         <NumberStepperInput
                             value={orderCycleDays}
                             onChangeText={setOrderCycleDays}
@@ -1619,8 +1596,10 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                     </View>
                 </View>
                 <View style={styles.row}>
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('leadtime.minValidDays')}</Text>
+                    <View style={topFilterPairFieldStyle}>
+                        <Text style={[styles.label, styles.labelCentered]}>
+                            {t('leadtime.minValidDays')}
+                        </Text>
                         <NumberStepperInput
                             value={minValidDays}
                             onChangeText={setMinValidDays}
@@ -1628,8 +1607,10 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                         />
                     </View>
 
-                    <View style={styles.fieldHalf}>
-                        <Text style={styles.label}>{t('leadtime.maxValidDays')}</Text>
+                    <View style={topFilterPairFieldStyle}>
+                        <Text style={[styles.label, styles.labelCentered]}>
+                            {t('leadtime.maxValidDays')}
+                        </Text>
                         <NumberStepperInput
                             value={maxValidDays}
                             onChangeText={setMaxValidDays}
@@ -1651,25 +1632,31 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
 
                 {showAdvancedLeadtime ? (
                     <View style={styles.advancedBox}>
-                        <View style={styles.row}>
-                            <View style={styles.fieldThird}>
-                                <Text style={styles.label}>{t('leadtime.maxBookingHeads')}</Text>
+                        <View style={styles.responsiveFieldsRow}>
+                            <View style={responsiveFieldStyle}>
+                                <Text style={[styles.label, styles.labelCentered]}>
+                                    {t('leadtime.maxBookingHeads')}
+                                </Text>
                                 <NumberStepperInput
                                     value={maxBookingHeads}
                                     onChangeText={setMaxBookingHeads}
                                     minValue={1}
                                 />
                             </View>
-                            <View style={styles.fieldThird}>
-                                <Text style={styles.label}>{t('leadtime.maxDeliveryHeads')}</Text>
+                            <View style={responsiveFieldStyle}>
+                                <Text style={[styles.label, styles.labelCentered]}>
+                                    {t('leadtime.maxDeliveryHeads')}
+                                </Text>
                                 <NumberStepperInput
                                     value={maxDeliveryHeads}
                                     onChangeText={setMaxDeliveryHeads}
                                     minValue={1}
                                 />
                             </View>
-                            <View style={styles.fieldThird}>
-                                <Text style={styles.label}>{t('leadtime.timeoutMs')}</Text>
+                            <View style={responsiveFieldStyle}>
+                                <Text style={[styles.label, styles.labelCentered]}>
+                                    {t('leadtime.timeoutMs')}
+                                </Text>
                                 <NumberStepperInput
                                     value={leadTimeTimeoutMs}
                                     onChangeText={setLeadTimeTimeoutMs}
@@ -1685,7 +1672,14 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                 ) : null}
 
                 <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.buttonPrimary} onPress={handleFetch} disabled={loading}>
+                    <TouchableOpacity
+                        style={[
+                            styles.buttonPrimary,
+                            !compactLayout && styles.buttonPrimaryDesktop,
+                        ]}
+                        onPress={handleFetch}
+                        disabled={loading}
+                    >
                         <Text style={styles.buttonText}>
                             {loading ? t('loading') : t('calculate')}
                         </Text>
@@ -1703,102 +1697,284 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                             <Text style={styles.buttonSecondaryText}>{t('export.exportCsv')}</Text>
                         </TouchableOpacity>
                     ) : null}
-                </View>
 
-                <View style={styles.bulkEditBox}>
-                    <Text style={styles.bulkEditTitle}>{t('reorderAssist.bulkEditTitle')}</Text>
-
-                    <Text style={styles.bulkEditHint}>
-                        {selectedVisibleRowsLength > 0
-                            ? t('reorderAssist.bulkEditSelectedHint', { count: selectedVisibleRowsLength })
-                            : t('reorderAssist.bulkEditHint', { count: filteredRowsLength })}
-                    </Text>
-
-                    <View style={styles.bulkEditRow}>
-
-                        <View style={styles.bulkEditField}>
-                            <Text style={styles.labelSmall}>{t('reorderAssist.leadTime')}</Text>
-                            <NumberStepperInput
-                                value={bulkLeadTimeDays}
-                                onChangeText={setBulkLeadTimeDays}
-                                minValue={0}
-                                placeholder={leadTimeDays}
-                                invalid={!bulkLeadTimeIsValid}
-                            />
-                        </View>
-
-                        <View style={styles.bulkEditField}>
-                            <Text style={styles.labelSmall}>{t('reorderAssist.safetyDays')}</Text>
-                            <NumberStepperInput
-                                value={bulkSafetyDays}
-                                onChangeText={setBulkSafetyDays}
-                                minValue={0}
-                                placeholder={safetyDays}
-                                invalid={!bulkSafetyDaysIsValid}
-                            />
-                        </View>
-
-                        <View style={styles.bulkEditField}>
-                            <Text style={styles.labelSmall}>{t('raw.field.quantity')}</Text>
-                            <NumberStepperInput
-                                value={bulkPackSize}
-                                onChangeText={setBulkPackSize}
-                                minValue={1}
-                                placeholder={packSize}
-                                invalid={!bulkPackSizeIsValid}
-                            />
-                        </View>
-
-                        <View style={styles.bulkEditField}>
-                            <Text style={styles.labelSmall}>{t('reorderAssist.orderCycleDays')}</Text>
-                            <NumberStepperInput
-                                value={bulkOrderCycleDays}
-                                onChangeText={setBulkOrderCycleDays}
-                                minValue={0}
-                                placeholder={orderCycleDays}
-                                invalid={!bulkOrderCycleIsValid}
-                            />
-                        </View>
-
-                    </View>
-
-                    <View style={styles.bulkEditActions}>
-                        <TouchableOpacity
-                            style={[
-                                styles.bulkEditApplyButton,
-                                !canApplyBulkSettings && styles.bulkEditApplyButtonDisabled,
-                            ]}
-                            onPress={applyBulkVisibleSettings}
-                            disabled={!canApplyBulkSettings}
-                        >
-                            <Text style={styles.bulkEditApplyButtonText}>
-                                {t('reorderAssist.bulkEditApply', { count: bulkApplyRowsLength })}
-                            </Text>
-                        </TouchableOpacity>
-
+                    {filteredRowsLength > 0 ? (
                         <TouchableOpacity
                             style={styles.buttonSecondary}
-                            onPress={() => {
-                                setBulkLeadTimeDays('');
-                                setBulkSafetyDays('');
-                                setBulkOrderCycleDays('');
-                                setBulkPackSize('');
-                            }}
+                            onPress={() => setShowBulkEdit((prev) => !prev)}
                         >
-                            <Text style={styles.buttonSecondaryText}>{t('common.clear')}</Text>
+                            <Text style={styles.buttonSecondaryText}>
+                                {t('reorderAssist.bulkEditTitle')}
+                            </Text>
                         </TouchableOpacity>
-                    </View>
-
-                    {!bulkLeadTimeIsValid ||
-                        !bulkSafetyDaysIsValid ||
-                        !bulkOrderCycleIsValid ||
-                        !bulkPackSizeIsValid ? (
-                        <Text style={styles.bulkEditErrorText}>
-                            {t('reorderAssist.bulkEditError')}
-                        </Text>
                     ) : null}
                 </View>
+
+                {showBulkEdit && filteredRowsLength > 0 ? (
+                    <View style={styles.bulkEditBox}>
+                        <Text style={styles.bulkEditHint}>
+                            {selectedVisibleRowsLength > 0
+                                ? t('reorderAssist.bulkEditSelectedHint', { count: selectedVisibleRowsLength })
+                                : t('reorderAssist.bulkEditHint', { count: filteredRowsLength })}
+                        </Text>
+
+                        <View style={styles.bulkEditRow}>
+
+                            <View style={[styles.bulkEditField, bulkEditFieldStyle]}>
+                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                    {t('reorderAssist.leadTime')}
+                                </Text>
+                                <NumberStepperInput
+                                    value={bulkLeadTimeDays}
+                                    onChangeText={setBulkLeadTimeDays}
+                                    minValue={0}
+                                    placeholder={leadTimeDays}
+                                    invalid={!bulkLeadTimeIsValid}
+                                />
+                            </View>
+
+                            <View style={[styles.bulkEditField, bulkEditFieldStyle]}>
+                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                    {t('reorderAssist.safetyDays')}
+                                </Text>
+                                <NumberStepperInput
+                                    value={bulkSafetyDays}
+                                    onChangeText={setBulkSafetyDays}
+                                    minValue={0}
+                                    placeholder={safetyDays}
+                                    invalid={!bulkSafetyDaysIsValid}
+                                />
+                            </View>
+
+                            <View style={[styles.bulkEditField, bulkEditFieldStyle]}>
+                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                    {t('raw.field.quantity')}
+                                </Text>
+                                <NumberStepperInput
+                                    value={bulkPackSize}
+                                    onChangeText={setBulkPackSize}
+                                    minValue={1}
+                                    placeholder={packSize}
+                                    invalid={!bulkPackSizeIsValid}
+                                />
+                            </View>
+
+                            <View style={[styles.bulkEditField, bulkEditFieldStyle]}>
+                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                    {t('reorderAssist.orderCycleDays')}
+                                </Text>
+                                <NumberStepperInput
+                                    value={bulkOrderCycleDays}
+                                    onChangeText={setBulkOrderCycleDays}
+                                    minValue={0}
+                                    placeholder={orderCycleDays}
+                                    invalid={!bulkOrderCycleIsValid}
+                                />
+                            </View>
+
+                        </View>
+
+                        <View style={styles.bulkEditActions}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.bulkEditApplyButton,
+                                    !canApplyBulkSettings && styles.bulkEditApplyButtonDisabled,
+                                ]}
+                                onPress={applyBulkVisibleSettings}
+                                disabled={!canApplyBulkSettings}
+                            >
+                                <Text style={styles.bulkEditApplyButtonText}>
+                                    {t('reorderAssist.bulkEditApply', { count: bulkApplyRowsLength })}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.buttonSecondary}
+                                onPress={() => {
+                                    setBulkLeadTimeDays('');
+                                    setBulkSafetyDays('');
+                                    setBulkOrderCycleDays('');
+                                    setBulkPackSize('');
+                                }}
+                            >
+                                <Text style={styles.buttonSecondaryText}>{t('common.clear')}</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {!bulkLeadTimeIsValid ||
+                            !bulkSafetyDaysIsValid ||
+                            !bulkOrderCycleIsValid ||
+                            !bulkPackSizeIsValid ? (
+                            <Text style={styles.bulkEditErrorText}>
+                                {t('reorderAssist.bulkEditError')}
+                            </Text>
+                        ) : null}
+                    </View>
+                ) : null}
+
+                <View style={styles.listFiltersSection}>
+                    <View style={styles.listFilterGroup}>
+                        <Text style={styles.listFilterLabel}>{t('reorderAssist.filterArticleScopeTitle')}</Text>
+                        <View style={styles.statusRow}>
+                            <TouchableOpacity
+                                style={[styles.filterChip, webshopFilter === 'ALL' && styles.filterChipActive]}
+                                onPress={() => setWebshopFilter('ALL')}
+                            >
+                                <Text
+                                    style={[
+                                        styles.filterChipText,
+                                        webshopFilter === 'ALL' && styles.filterChipTextActive,
+                                    ]}
+                                >
+                                    {t('allArticles')}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[
+                                    styles.filterChip,
+                                    webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipActive,
+                                ]}
+                                onPress={() => setWebshopFilter('WEBSHOP_ONLY')}
+                            >
+                                <Text
+                                    style={[
+                                        styles.filterChipText,
+                                        webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipTextActive,
+                                    ]}
+                                >
+                                    {t('webshopOnly')}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    <View style={styles.listFilterGroup}>
+                        <Text style={styles.listFilterLabel}>{t('reorderAssist.filterStatusTitle')}</Text>
+                        <View style={styles.statusRow}>
+                            {(['ALL', ...STATUS_FILTER_VALUES] as const).map((value) => (
+                                <TouchableOpacity
+                                    key={value}
+                                    style={[
+                                        styles.filterChip,
+                                        (
+                                            value === 'ALL'
+                                                ? statusFilter.length === 0
+                                                : statusFilter.includes(value)
+                                        ) && styles.filterChipActive,
+                                    ]}
+                                    onPress={() => {
+                                        setStatusFilter((prev) => {
+                                            if (value === 'ALL') return [];
+
+                                            if (prev.includes(value)) {
+                                                const next = prev.filter((item) => item !== value);
+                                                return next;
+                                            }
+
+                                            return [...prev, value];
+                                        });
+                                    }}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.filterChipText,
+                                            (
+                                                value === 'ALL'
+                                                    ? statusFilter.length === 0
+                                                    : statusFilter.includes(value)
+                                            ) && styles.filterChipTextActive,
+                                        ]}
+                                    >
+                                        {getStatusFilterLabel(value, t)}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+
+                    <View style={styles.listFilterGroup}>
+                        <Text style={styles.listFilterLabel}>{t('reorderAssist.filterSortTitle')}</Text>
+                        <View style={styles.sortRow}>
+                            <TouchableOpacity
+                                style={[styles.filterChip, sortBy === 'article' && styles.filterChipActive]}
+                                onPress={() => setSortBy('article')}
+                            >
+                                <Text style={[styles.filterChipText, sortBy === 'article' && styles.filterChipTextActive]}>
+                                    {t('article')}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.filterChip, sortBy === 'title' && styles.filterChipActive]}
+                                onPress={() => setSortBy('title')}
+                            >
+                                <Text style={[styles.filterChipText, sortBy === 'title' && styles.filterChipTextActive]}>
+                                    {t('sortTitleLabel')}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.filterChip, sortBy === 'supplier' && styles.filterChipActive]}
+                                onPress={() => setSortBy('supplier')}
+                            >
+                                <Text style={[styles.filterChipText, sortBy === 'supplier' && styles.filterChipTextActive]}>
+                                    {t('supplier')}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.filterChip, sortBy === 'roundedOrderQty' && styles.filterChipActive]}
+                                onPress={() => setSortBy('roundedOrderQty')}
+                            >
+                                <Text
+                                    style={[
+                                        styles.filterChipText,
+                                        sortBy === 'roundedOrderQty' && styles.filterChipTextActive,
+                                    ]}
+                                >
+                                    {t('suggested')}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
             </View>
+
+            {history || filteredRowsLength > 0 ? (
+                <View style={styles.summarySelectionCard}>
+                    <View style={styles.summarySelectionRow}>
+                        {filteredRowsLength > 0 ? (
+                            <MasterSelectionCheckbox
+                                checked={allVisibleRowsSelected}
+                                label={t('common.all')}
+                                onPress={
+                                    allVisibleRowsSelected
+                                        ? onClearBulkSelection
+                                        : onSelectAllVisibleRows
+                                }
+                            />
+                        ) : null}
+
+                        {history ? (
+                            <View style={styles.summaryCompact}>
+                                <Text style={styles.summaryText}>
+                                    {t('reorderAssist.dateFrom')}: {history.from}
+                                </Text>
+                                <Text style={styles.summaryText}>
+                                    {t('reorderAssist.dateTo')}: {history.to}
+                                </Text>
+                                <Text style={styles.summaryText}>
+                                    {t('articles.title')}: {filteredRowsLength}/{reorderRowsLength}
+                                </Text>
+                                <Text style={styles.summaryText}>
+                                    {t('raw.rows')}: {history.debug?.matched_rows ?? 0}
+                                </Text>
+                            </View>
+                        ) : null}
+                    </View>
+                </View>
+            ) : null}
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -1812,165 +1988,6 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
                 <Text style={styles.infoText}>
                     {t('reorderAssist.loadingStockGlobal')}
                 </Text>
-            ) : null}
-
-            {history ? (
-                <View style={styles.summaryCompact}>
-                    <Text style={styles.summaryText}>
-                        {t('reorderAssist.dateFrom')}: {history.from}
-                    </Text>
-                    <Text style={styles.summaryText}>
-                        {t('reorderAssist.dateTo')}: {history.to}
-                    </Text>
-                    <Text style={styles.summaryText}>
-                        {t('articles.title')}: {filteredRowsLength}/{reorderRowsLength}
-                    </Text>
-                    <Text style={styles.summaryText}>
-                        {t('raw.rows')}: {history.debug?.matched_rows ?? 0}
-                    </Text>
-                </View>
-            ) : null}
-
-            <View style={styles.listFiltersSection}>
-                <View style={styles.listFilterGroup}>
-                    <Text style={styles.listFilterLabel}>{t('reorderAssist.filterArticleScopeTitle')}</Text>
-                    <View style={styles.statusRow}>
-                        <TouchableOpacity
-                            style={[styles.filterChip, webshopFilter === 'ALL' && styles.filterChipActive]}
-                            onPress={() => setWebshopFilter('ALL')}
-                        >
-                            <Text
-                                style={[
-                                    styles.filterChipText,
-                                    webshopFilter === 'ALL' && styles.filterChipTextActive,
-                                ]}
-                            >
-                                {t('allArticles')}
-                            </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={[
-                                styles.filterChip,
-                                webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipActive,
-                            ]}
-                            onPress={() => setWebshopFilter('WEBSHOP_ONLY')}
-                        >
-                            <Text
-                                style={[
-                                    styles.filterChipText,
-                                    webshopFilter === 'WEBSHOP_ONLY' && styles.filterChipTextActive,
-                                ]}
-                            >
-                                {t('webshopOnly')}
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-
-                <View style={styles.listFilterGroup}>
-                    <Text style={styles.listFilterLabel}>{t('reorderAssist.filterStatusTitle')}</Text>
-                    <View style={styles.statusRow}>
-                        {(['ALL', ...STATUS_FILTER_VALUES] as const).map((value) => (
-                            <TouchableOpacity
-                                key={value}
-                                style={[
-                                    styles.filterChip,
-                                    (
-                                        value === 'ALL'
-                                            ? statusFilter.length === 0
-                                            : statusFilter.includes(value)
-                                    ) && styles.filterChipActive,
-                                ]}
-                                onPress={() => {
-                                    setStatusFilter((prev) => {
-                                        if (value === 'ALL') return [];
-
-                                        if (prev.includes(value)) {
-                                            const next = prev.filter((item) => item !== value);
-                                            return next;
-                                        }
-
-                                        return [...prev, value];
-                                    });
-                                }}
-                            >
-                                <Text
-                                    style={[
-                                        styles.filterChipText,
-                                        (
-                                            value === 'ALL'
-                                                ? statusFilter.length === 0
-                                                : statusFilter.includes(value)
-                                        ) && styles.filterChipTextActive,
-                                    ]}
-                                >
-                                    {getStatusFilterLabel(value, t)}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-
-                <View style={styles.listFilterGroup}>
-                    <Text style={styles.listFilterLabel}>{t('reorderAssist.filterSortTitle')}</Text>
-                    <View style={styles.sortRow}>
-                    <TouchableOpacity
-                        style={[styles.filterChip, sortBy === 'article' && styles.filterChipActive]}
-                        onPress={() => setSortBy('article')}
-                    >
-                        <Text style={[styles.filterChipText, sortBy === 'article' && styles.filterChipTextActive]}>
-                            {t('article')}
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.filterChip, sortBy === 'title' && styles.filterChipActive]}
-                        onPress={() => setSortBy('title')}
-                    >
-                        <Text style={[styles.filterChipText, sortBy === 'title' && styles.filterChipTextActive]}>
-                            {t('sortTitleLabel')}
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.filterChip, sortBy === 'supplier' && styles.filterChipActive]}
-                        onPress={() => setSortBy('supplier')}
-                    >
-                        <Text style={[styles.filterChipText, sortBy === 'supplier' && styles.filterChipTextActive]}>
-                            {t('supplier')}
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.filterChip, sortBy === 'roundedOrderQty' && styles.filterChipActive]}
-                        onPress={() => setSortBy('roundedOrderQty')}
-                    >
-                        <Text
-                            style={[
-                                styles.filterChipText,
-                                sortBy === 'roundedOrderQty' && styles.filterChipTextActive,
-                            ]}
-                        >
-                            {t('suggested')}
-                        </Text>
-                    </TouchableOpacity>
-                    </View>
-                </View>
-            </View>
-
-            {filteredRowsLength > 0 ? (
-                <View style={styles.selectionColumnGuideRow}>
-                    <MasterSelectionCheckbox
-                        checked={allVisibleRowsSelected}
-                        label={t('common.all')}
-                        onPress={
-                            allVisibleRowsSelected
-                                ? onClearBulkSelection
-                                : onSelectAllVisibleRows
-                        }
-                    />
-                </View>
             ) : null}
 
             <Modal
@@ -2086,7 +2103,9 @@ const ReorderHeader = React.memo(function ReorderHeader(props: ReorderHeaderProp
 
 export default function ReorderScreen() {
     const { t } = useI18n();
+    const { width: windowWidth } = useWindowDimensions();
     const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
+    const compactLayout = windowWidth < 768;
 
     const [from, setFrom] = useState(() => {
         const today = new Date();
@@ -2157,6 +2176,8 @@ export default function ReorderScreen() {
     const [loadingPurchaseHistory, setLoadingPurchaseHistory] = useState<Record<string, boolean>>({});
     const [loadingIncomingHistory, setLoadingIncomingHistory] = useState<Record<string, boolean>>({});
     const [selectedBulkArticles, setSelectedBulkArticles] = useState<Record<string, true>>({});
+    const [expandedInlineEditors, setExpandedInlineEditors] = useState<ExpandedInlineEditorMap>({});
+    const [expandedIncomingDeliveries, setExpandedIncomingDeliveries] = useState<ExpandedIncomingDeliveryMap>({});
     const [settingsHydrated, setSettingsHydrated] = useState(false);
 
     const fetchRunRef = useRef(0);
@@ -2847,7 +2868,41 @@ export default function ReorderScreen() {
             }));
         }
     };
+/*
+    useEffect(() => {
+        const pendingRequests = Object.entries(recentPurchases).flatMap(([article, items]) =>
+            items
+                .map((entry) => {
+                    const purchaseOrderNo = getPurchaseOrderKey(entry);
+                    const requestKey = purchaseOrderNo
+                        ? getIncomingRequestKey(article, purchaseOrderNo)
+                        : '';
 
+                    return {
+                        article,
+                        purchaseOrderNo,
+                        purchaseOrderDate:
+                            (entry as any).orderDate || (entry as any).rowDate || undefined,
+                        requestKey,
+                    };
+                })
+                .filter(
+                    ({ purchaseOrderNo, requestKey }) =>
+                        Boolean(purchaseOrderNo) &&
+                        Boolean(requestKey) &&
+                        requestedIncomingHistory[requestKey] !== true &&
+                        loadingIncomingHistory[requestKey] !== true
+                )
+        );
+
+        if (!pendingRequests.length) return;
+
+        pendingRequests.forEach(({ article, purchaseOrderNo, purchaseOrderDate }) => {
+            if (!purchaseOrderNo) return;
+            void fetchMatchingDeliveryForArticle(article, purchaseOrderNo, purchaseOrderDate);
+        });
+    }, [recentPurchases, requestedIncomingHistory, loadingIncomingHistory]);
+ */
     useEffect(() => {
         if (!history || !filteredRows.length) return;
 
@@ -2973,6 +3028,8 @@ export default function ReorderScreen() {
             setLoadingPurchaseHistory({});
             setLoadingIncomingHistory({});
             setSelectedBulkArticles({});
+            setExpandedInlineEditors({});
+            setExpandedIncomingDeliveries({});
             historyRef.current = null;
             completedHistoryArticlesRef.current = {};
             inFlightHistoryArticlesRef.current = {};
@@ -3231,6 +3288,38 @@ export default function ReorderScreen() {
         setSelectedBulkArticles({});
     };
 
+    const toggleInlineEditorVisibility = (article: string) => {
+        setExpandedInlineEditors((prev) => {
+            if (prev[article]) {
+                const next = { ...prev };
+                delete next[article];
+                return next;
+            }
+
+            return {
+                ...prev,
+                [article]: true,
+            };
+        });
+    };
+
+    const toggleIncomingDeliveryVisibility = (requestKey: string) => {
+        if (!requestKey) return;
+
+        setExpandedIncomingDeliveries((prev) => {
+            if (prev[requestKey]) {
+                const next = { ...prev };
+                delete next[requestKey];
+                return next;
+            }
+
+            return {
+                ...prev,
+                [requestKey]: true,
+            };
+        });
+    };
+
     const applyBulkVisibleSettings = (values: {
         leadTimeDays?: number;
         safetyDays?: number;
@@ -3329,6 +3418,7 @@ export default function ReorderScreen() {
                         supplierFilterOptions={supplierFilterOptions}
                         webshopFilter={webshopFilter}
                         setWebshopFilter={setWebshopFilter}
+                        compactLayout={compactLayout}
                         handleFetch={handleFetch}
                         loading={loading}
                         filteredRowsLength={filteredRows.length}
@@ -3384,11 +3474,20 @@ export default function ReorderScreen() {
                 renderItem={({ item }) => {
                     const custom = productSettings[item.article];
                     const isBulkSelected = selectedBulkArticles[item.article] === true;
+                    const showInlineEditor = expandedInlineEditors[item.article] === true;
+                    const showDecisionText =
+                        item.latestOrderDate == null ||
+                        item.daysUntilLatestOrder == null ||
+                        item.isPastLatestOrderDate ||
+                        item.daysUntilLatestOrder <= 3;
                     const purchaseHistory = recentPurchases[item.article] || [];
                     const isLoadingAutoLeadTime = loadingAutoLeadTimeArticles[item.article] === true;
                     const autoLeadTimeError = autoLeadTimeErrors[item.article];
                     const isLoadingPurchases = loadingPurchaseHistory[item.article] === true;
                     const stockIsReady = resolvedStockArticles[item.article] === true;
+                    const inlineEditorFieldStyle = compactLayout
+                        ? styles.inlineEditorFieldCompact
+                        : styles.inlineEditorFieldExpanded;
                     const purchaseRequestKeys = purchaseHistory
                         .map((entry) => {
                             const purchaseOrderNo = getPurchaseOrderKey(entry);
@@ -3484,6 +3583,30 @@ export default function ReorderScreen() {
                                         )}
                                     </View>
 
+                                    <View style={styles.metricsRow}>
+                                        <Text style={styles.metric}>
+                                            {t('reorderAssist.stock')}{' '}
+                                            {stockIsReady
+                                                ? `${item.currentStockQty} ${item.unit || ''}`
+                                                : t('reorderAssist.loadingStockGlobal')}
+                                        </Text>
+                                        <Text style={styles.metric}>
+                                            {t('reorderAssist.dailyUsage')}: {item.avgPerDay} {item.unit || ''}
+                                        </Text>
+                                        <Text style={styles.metric}>
+                                            {t('reorderAssist.dailyUsage')} x 7: {item.avgPerWeek} {item.unit || ''}
+                                        </Text>
+                                        <Text style={styles.metric}>
+                                            {t('reorderAssist.monthlyUsage')}: {item.avgPerMonth} {item.unit || ''}
+                                        </Text>
+                                        <Text style={styles.metric}>
+                                            {t('reorderAssist.quarterlyUsage')}: {item.avgPerQuarter} {item.unit || ''}
+                                        </Text>
+                                        <Text style={styles.metric}>
+                                            {t('reorderAssist.yearlyUsage')}: {item.avgPerYear} {item.unit || ''}
+                                        </Text>
+                                    </View>
+
                                     {stockIsReady ? (
                                         <View
                                             style={[
@@ -3500,51 +3623,53 @@ export default function ReorderScreen() {
                                         <HelpIconButton onPress={() => setHelpTopic('decision')} />
                                     </View>
 
-                                    <Text style={styles.decisionText}>{getOrderDecisionText(item, t)}</Text>
-
-                                    {item.estimatedOutOfStockDate ? (
-                                        <Text style={styles.decisionLine}>
-                                            {t('estimatedOutOfStock')}{' '}
-                                            <Text style={styles.decisionStrong}>{item.estimatedOutOfStockDate}</Text>
-                                        </Text>
-                                    ) : (
-                                        <Text style={styles.decisionLine}>
-                                            {t('estimatedOutOfStock')}{' '}
-                                            <Text style={styles.decisionStrong}>{t('cannotCalculate')}</Text>
-                                        </Text>
-                                    )}
-
-                                    {item.latestOrderDate ? (
-                                        <Text
-                                            style={[
-                                                styles.decisionLine,
-                                                item.isPastLatestOrderDate && styles.decisionLineDanger,
-                                            ]}
-                                        >
-                                            {t('orderBy')}{' '}
-                                            <Text style={styles.decisionStrong}>{item.latestOrderDate}</Text>
-                                        </Text>
+                                    {showDecisionText ? (
+                                        <Text style={styles.decisionText}>{getOrderDecisionText(item, t)}</Text>
                                     ) : null}
 
-                                    {item.daysUntilOutOfStock != null ? (
-                                        <Text style={styles.decisionLine}>
-                                            {t('stockLastsAboutDays')}{' '}
-                                            <Text style={styles.decisionStrong}>{item.daysUntilOutOfStock}</Text>
-                                        </Text>
-                                    ) : null}
+                                    <View style={styles.decisionRow}>
+                                        {item.latestOrderDate ? (
+                                            <Text
+                                                style={[
+                                                    styles.decisionLine,
+                                                    styles.decisionLineInline,
+                                                    item.isPastLatestOrderDate && styles.decisionLineDanger,
+                                                ]}
+                                            >
+                                                {t('orderBy')}{' '}
+                                                <Text style={styles.decisionStrong}>{item.latestOrderDate}</Text>
+                                            </Text>
+                                        ) : null}
 
-                                    <Text style={styles.decisionLine}>
-                                        {t('suggestedOrder')}{' '}
-                                        <Text style={styles.decisionStrong}>
-                                            {item.suggestedOrderQty} {item.unit || ''}
+                                        <Text style={[styles.decisionLine, styles.decisionLineInline]}>
+                                            {t('estimatedOutOfStock')}{' '}
+                                            <Text style={styles.decisionStrong}>
+                                                {item.estimatedOutOfStockDate ?? t('cannotCalculate')}
+                                            </Text>
                                         </Text>
-                                    </Text>
-                                    <Text style={styles.decisionLine}>
-                                        {t('roundedOrder')}{' '}
-                                        <Text style={styles.decisionStrong}>
-                                            {item.roundedOrderQty} {item.unit || ''}
+
+                                        {item.daysUntilOutOfStock != null ? (
+                                            <Text style={[styles.decisionLine, styles.decisionLineInline]}>
+                                                {t('stockLastsAboutDays')}{' '}
+                                                <Text style={styles.decisionStrong}>{item.daysUntilOutOfStock}</Text>
+                                            </Text>
+                                        ) : null}
+                                    </View>
+
+                                    <View style={styles.decisionRow}>
+                                        <Text style={[styles.decisionLine, styles.decisionLineInline]}>
+                                            {t('suggestedOrder')}{' '}
+                                            <Text style={styles.decisionStrong}>
+                                                {item.suggestedOrderQty} {item.unit || ''}
+                                            </Text>
                                         </Text>
-                                    </Text>
+                                        <Text style={[styles.decisionLine, styles.decisionLineInline]}>
+                                            {t('roundedOrder')}{' '}
+                                            <Text style={styles.decisionStrong}>
+                                                {item.roundedOrderQty} {item.unit || ''}
+                                            </Text>
+                                        </Text>
+                                    </View>
                                 </View>
                                     ) : (
                                         <View style={[styles.decisionBox, styles.decisionLoading]}>
@@ -3563,158 +3688,177 @@ export default function ReorderScreen() {
                                         </View>
                                     )}
 
-                            <View style={styles.metricsRow}>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.stock')}{' '}
-                                    {stockIsReady
-                                        ? `${item.currentStockQty} ${item.unit || ''}`
-                                        : t('reorderAssist.loadingStockGlobal')}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.dailyUsage')}: {item.avgPerDay} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.dailyUsage')} x 7: {item.avgPerWeek} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.monthlyUsage')}: {item.avgPerMonth} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.quarterlyUsage')}: {item.avgPerQuarter} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.yearlyUsage')}: {item.avgPerYear} {item.unit || ''}
-                                </Text>
-                            </View>
-
-                            <View style={styles.inlineEditorRow}>
-                                <View style={styles.inlineEditorField}>
-                                    <Text style={styles.labelSmall}>{t('reorderAssist.leadTime')}</Text>
-                                    <NumberStepperInput
-                                        value={custom?.leadTimeDays != null ? String(custom.leadTimeDays) : ''}
-                                        onChangeText={(value) =>
-                                            updateProductSetting(item.article, 'leadTimeDays', value)
-                                        }
-                                        minValue={0}
-                                        placeholder={String(autoLeadTimes[item.article] ?? (Number(leadTimeDays) || 14))}
-                                        compact
-                                    />
-                                </View>
-
-                                <View style={styles.inlineEditorField}>
-                                    <Text style={styles.labelSmall}>{t('reorderAssist.safetyDays')}</Text>
-                                    <NumberStepperInput
-                                        value={custom?.safetyDays != null ? String(custom.safetyDays) : ''}
-                                        onChangeText={(value) =>
-                                            updateProductSetting(item.article, 'safetyDays', value)
-                                        }
-                                        minValue={0}
-                                        placeholder={String(Number(safetyDays) || 7)}
-                                        compact
-                                    />
-                                </View>
-
-                                <View style={styles.inlineEditorField}>
-                                    <Text style={styles.labelSmall}>{t('raw.field.quantity')}</Text>
-                                    <NumberStepperInput
-                                        value={custom?.packSize != null ? String(custom.packSize) : ''}
-                                        onChangeText={(value) =>
-                                            updateProductSetting(item.article, 'packSize', value)
-                                        }
-                                        minValue={1}
-                                        placeholder={String(Number(packSize) || 1)}
-                                        compact
-                                    />
-                                </View>
-
-                                <View style={styles.inlineEditorField}>
-                                    <Text style={styles.labelSmall}>{t('reorderAssist.orderCycleDays')}</Text>
-                                    <NumberStepperInput
-                                        value={custom?.orderCycleDays != null ? String(custom.orderCycleDays) : ''}
-                                        onChangeText={(value) =>
-                                            updateProductSetting(item.article, 'orderCycleDays', value)
-                                        }
-                                        minValue={0}
-                                        placeholder={String(item.orderCycleDays)}
-                                        compact
-                                    />
-                                </View>
-                            </View>
-
-                            <View style={styles.inlineEditorActions}>
-                                <TouchableOpacity
-                                    style={styles.buttonSecondary}
-                                    onPress={() => clearProductSettings(item.article)}
-                                >
-                                    <Text style={styles.buttonSecondaryText}>{t('common.clear')}</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={styles.metricsRow}>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.leadTime')}: {item.leadTimeDays} {t('days')}
-                                    {item.hasCustomLeadTime
-                                        ? ` (${t('custom')})`
-                                        : item.hasAutoLeadTime
-                                            ? ` (${t('auto')})`
-                                            : ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.safetyDays')}: {item.safetyDays} {t('days')}
-                                    {item.hasCustomSafetyDays ? ` (${t('custom')})` : ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('reorderAssist.orderCycleDays')}: {item.orderCycleDays} {t('days')}
-                                    {item.hasCustomOrderCycleDays ? ` (${t('custom')})` : ''}
-                                </Text>
-                                <Text style={styles.metric}>
-                                    {t('raw.field.quantity')}: {item.packSize}
-                                    {item.hasCustomPackSize ? ` (${t('custom')})` : ''}
-                                </Text>
-                            </View>
-
-                            {!item.hasCustomLeadTime && !item.hasAutoLeadTime ? (
-                                isLoadingAutoLeadTime ? (
-                                    <View style={styles.historyLoadingRow}>
-                                        <ActivityIndicator size="small" />
-                                        <Text style={styles.metricMutedIndented}>
-                                            {t('fetchingLeadTimes')}
+                            <View style={styles.settingsBox}>
+                                <View style={styles.metricsRow}>
+                                    <Text style={styles.metric}>
+                                        {t('reorderAssist.leadTime')}: {item.leadTimeDays} {t('days')}
+                                        {item.hasCustomLeadTime
+                                            ? ` (${t('custom')})`
+                                            : item.hasAutoLeadTime
+                                                ? ` (${t('auto')})`
+                                                : ''}
+                                    </Text>
+                                    <Text style={styles.metric}>
+                                        {t('reorderAssist.safetyDays')}: {item.safetyDays} {t('days')}
+                                        {item.hasCustomSafetyDays ? ` (${t('custom')})` : ''}
+                                    </Text>
+                                    <Text style={styles.metric}>
+                                        {t('reorderAssist.orderCycleDays')}: {item.orderCycleDays} {t('days')}
+                                        {item.hasCustomOrderCycleDays ? ` (${t('custom')})` : ''}
+                                    </Text>
+                                    <Text style={styles.metric}>
+                                        {t('raw.field.quantity')}: {item.packSize}
+                                        {item.hasCustomPackSize ? ` (${t('custom')})` : ''}
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={styles.inlineMetricActionButton}
+                                        onPress={() => toggleInlineEditorVisibility(item.article)}
+                                    >
+                                        <Text style={styles.inlineMetricActionText}>
+                                            {showInlineEditor ? t('columns.hide') : t('columns.show')}{' '}
+                                            {t('reorderAssist.overrides').toLowerCase()}
                                         </Text>
-                                    </View>
-                                ) : (
-                                    <>
-                                        <TouchableOpacity
-                                            style={styles.inlineLoadButton}
-                                            onPress={() => void fetchAutoLeadTimeForArticle(item.article)}
-                                        >
-                                            <Text style={styles.inlineLoadButtonText}>
-                                                {autoLeadTimeError
-                                                    ? `${t('common.retry')} ${t('reorderAssist.leadTime').toLowerCase()}`
-                                                    : t('reorderAssist.fetchLeadTime')}
-                                            </Text>
-                                        </TouchableOpacity>
-                                        {autoLeadTimeError ? (
-                                            <Text style={styles.metricMutedIndented}>
-                                                {t('common.error')}: {autoLeadTimeError}
-                                            </Text>
-                                        ) : null}
-                                    </>
-                                )
-                            ) : null}
+                                    </TouchableOpacity>
+                                </View>
 
-                            <View style={styles.metricsRow}>
-                                <Text style={styles.metricMuted}>
-                                    {t('leadTimeBasis')}: {item.forecastLeadTimeQty} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metricMuted}>
-                                    {t('safetyBasis')}: {item.safetyQty} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metricMuted}>
-                                    {t('orderCycleBasis')}: {item.cycleQty} {item.unit || ''}
-                                </Text>
-                                <Text style={styles.metricMuted}>
-                                    {t('targetLevel')}: {item.targetStockQty} {item.unit || ''}
-                                </Text>
+                                {showInlineEditor ? (
+                                    <>
+                                        <View style={styles.inlineEditorRow}>
+                                            <View
+                                                style={[
+                                                    styles.inlineEditorField,
+                                                    inlineEditorFieldStyle,
+                                                ]}
+                                            >
+                                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                                    {t('reorderAssist.leadTime')}
+                                                </Text>
+                                                <NumberStepperInput
+                                                    value={custom?.leadTimeDays != null ? String(custom.leadTimeDays) : ''}
+                                                    onChangeText={(value) =>
+                                                        updateProductSetting(item.article, 'leadTimeDays', value)
+                                                    }
+                                                    minValue={0}
+                                                    placeholder={String(autoLeadTimes[item.article] ?? (Number(leadTimeDays) || 14))}
+                                                    compact
+                                                />
+                                            </View>
+
+                                            <View
+                                                style={[
+                                                    styles.inlineEditorField,
+                                                    inlineEditorFieldStyle,
+                                                ]}
+                                            >
+                                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                                    {t('reorderAssist.safetyDays')}
+                                                </Text>
+                                                <NumberStepperInput
+                                                    value={custom?.safetyDays != null ? String(custom.safetyDays) : ''}
+                                                    onChangeText={(value) =>
+                                                        updateProductSetting(item.article, 'safetyDays', value)
+                                                    }
+                                                    minValue={0}
+                                                    placeholder={String(Number(safetyDays) || 7)}
+                                                    compact
+                                                />
+                                            </View>
+
+                                            <View
+                                                style={[
+                                                    styles.inlineEditorField,
+                                                    inlineEditorFieldStyle,
+                                                ]}
+                                            >
+                                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                                    {t('raw.field.quantity')}
+                                                </Text>
+                                                <NumberStepperInput
+                                                    value={custom?.packSize != null ? String(custom.packSize) : ''}
+                                                    onChangeText={(value) =>
+                                                        updateProductSetting(item.article, 'packSize', value)
+                                                    }
+                                                    minValue={1}
+                                                    placeholder={String(Number(packSize) || 1)}
+                                                    compact
+                                                />
+                                            </View>
+
+                                            <View
+                                                style={[
+                                                    styles.inlineEditorField,
+                                                    inlineEditorFieldStyle,
+                                                ]}
+                                            >
+                                                <Text style={[styles.labelSmall, styles.labelSmallCentered]}>
+                                                    {t('reorderAssist.orderCycleDays')}
+                                                </Text>
+                                                <NumberStepperInput
+                                                    value={custom?.orderCycleDays != null ? String(custom.orderCycleDays) : ''}
+                                                    onChangeText={(value) =>
+                                                        updateProductSetting(item.article, 'orderCycleDays', value)
+                                                    }
+                                                    minValue={0}
+                                                    placeholder={String(item.orderCycleDays)}
+                                                    compact
+                                                />
+                                            </View>
+                                        </View>
+
+                                        <View style={styles.inlineEditorActions}>
+                                            <TouchableOpacity
+                                                style={styles.buttonSecondary}
+                                                onPress={() => clearProductSettings(item.article)}
+                                            >
+                                                <Text style={styles.buttonSecondaryText}>{t('common.clear')}</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    </>
+                                ) : null}
+
+                                {!item.hasCustomLeadTime && !item.hasAutoLeadTime ? (
+                                    isLoadingAutoLeadTime ? (
+                                        <View style={styles.historyLoadingRow}>
+                                            <ActivityIndicator size="small" />
+                                            <Text style={styles.metricMutedIndented}>
+                                                {t('fetchingLeadTimes')}
+                                            </Text>
+                                        </View>
+                                    ) : (
+                                        <>
+                                            <TouchableOpacity
+                                                style={styles.inlineLoadButton}
+                                                onPress={() => void fetchAutoLeadTimeForArticle(item.article)}
+                                            >
+                                                <Text style={styles.inlineLoadButtonText}>
+                                                    {autoLeadTimeError
+                                                        ? `${t('common.retry')} ${t('reorderAssist.leadTime').toLowerCase()}`
+                                                        : t('reorderAssist.fetchLeadTime')}
+                                                </Text>
+                                            </TouchableOpacity>
+                                            {autoLeadTimeError ? (
+                                                <Text style={styles.metricMutedIndented}>
+                                                    {t('common.error')}: {autoLeadTimeError}
+                                                </Text>
+                                            ) : null}
+                                        </>
+                                    )
+                                ) : null}
+
+                                <View style={styles.metricsRow}>
+                                    <Text style={styles.metricMuted}>
+                                        {t('leadTimeBasis')}: {item.forecastLeadTimeQty} {item.unit || ''}
+                                    </Text>
+                                    <Text style={styles.metricMuted}>
+                                        {t('safetyBasis')}: {item.safetyQty} {item.unit || ''}
+                                    </Text>
+                                    <Text style={styles.metricMuted}>
+                                        {t('orderCycleBasis')}: {item.cycleQty} {item.unit || ''}
+                                    </Text>
+                                    <Text style={styles.metricMuted}>
+                                        {t('targetLevel')}: {item.targetStockQty} {item.unit || ''}
+                                    </Text>
+                                </View>
                             </View>
 
                                     <View style={styles.historyBox}>
@@ -3750,26 +3894,102 @@ export default function ReorderScreen() {
                                         const rowIsLoadingIncoming = incomingRequestKey
                                             ? loadingIncomingHistory[incomingRequestKey] === true
                                             : false;
+                                        const showIncomingDetails = incomingRequestKey
+                                            ? expandedIncomingDeliveries[incomingRequestKey] === true
+                                            : false;
 
                                         const matchedIncoming = purchaseOrderNo
                                             ? incomingByBestnr[purchaseOrderNo] || []
                                             : [];
+                                        const matchedDeliveryNumbers = Array.from(
+                                            new Set(
+                                                matchedIncoming
+                                                    .map((delivery) =>
+                                                        String(delivery.deliveryDocumentNumber ?? '').trim()
+                                                    )
+                                                    .filter(Boolean)
+                                            )
+                                        );
 
                                         return (
                                             <View
                                                 key={`purchase-delivery-${item.article}-${index}`}
                                                 style={styles.orderDeliveryBlock}
                                             >
-                                                <Text style={styles.metricMuted}>
-                                                    {index === 0 ? t('common.latest') : t('common.previous')}
-                                                    : {t('reorderAssist.orderNumberShort')} {purchaseOrderNo || '-'} {' | '}
+                                                <View style={styles.historyOrderRow}>
+                                                    <Text style={[styles.metricMuted, styles.historyOrderText]}>
+                                                        {index === 0 ? t('common.latest') : t('common.previous')}
+                                                        : {t('reorderAssist.orderNumberShort')} {purchaseOrderNo || '-'}
+                                                    </Text>
+
+                                                    {matchedIncoming.length > 0 ? (
+                                                        <View style={styles.historyInlineLinkRow}>
+                                                            <Text style={styles.metricMuted}>
+                                                                {t('reorderAssist.deliveryDocumentShort')}
+                                                            </Text>
+
+                                                            {matchedDeliveryNumbers.length > 0 ? (
+                                                                matchedDeliveryNumbers.map((deliveryNumber) => (
+                                                                    <TouchableOpacity
+                                                                        key={`${incomingRequestKey}-${deliveryNumber}`}
+                                                                        style={styles.historyInlineLinkButton}
+                                                                        onPress={() =>
+                                                                            toggleIncomingDeliveryVisibility(incomingRequestKey)
+                                                                        }
+                                                                    >
+                                                                        <Text style={styles.historyInlineLinkText}>
+                                                                            {deliveryNumber}
+                                                                        </Text>
+                                                                    </TouchableOpacity>
+                                                                ))
+                                                            ) : (
+                                                                <TouchableOpacity
+                                                                    style={styles.historyInlineLinkButton}
+                                                                    onPress={() =>
+                                                                        toggleIncomingDeliveryVisibility(incomingRequestKey)
+                                                                    }
+                                                                >
+                                                                    <Text style={styles.historyInlineLinkText}>
+                                                                        {t('reorderAssist.matchingDelivery')}
+                                                                    </Text>
+                                                                </TouchableOpacity>
+                                                            )}
+                                                        </View>
+                                                    ) : rowIsLoadingIncoming ? (
+                                                        <View style={styles.historyInlineStatusRow}>
+                                                            <ActivityIndicator size="small" />
+                                                            <Text style={styles.metricMuted}>
+                                                                {t('reorderAssist.matchingDelivery')}
+                                                            </Text>
+                                                        </View>
+                                                    ) : purchaseOrderNo ? (
+                                                        <TouchableOpacity
+                                                            style={styles.historyInlineLinkButton}
+                                                            onPress={() =>
+                                                                void fetchMatchingDeliveryForArticle(
+                                                                    item.article,
+                                                                    purchaseOrderNo,
+                                                                    purchaseOrderDate
+                                                                )
+                                                            }
+                                                        >
+                                                            <Text style={styles.historyInlineLinkText}>
+                                                                {rowIncomingDebug?.error
+                                                                    ? t('common.retry')
+                                                                    : t('reorderAssist.loadMatchingDelivery')}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    ) : null}
+                                                </View>
+
+                                                <Text style={[styles.metricMuted, styles.historyOrderDetailsText]}>
                                                     {(entry as any).orderDate || (entry as any).rowDate || '-'} {' | '}
                                                     {t('reorderAssist.orderedShort')} {(entry as any).orderedQty ?? '-'} {entry.unit || item.unit || ''} {' | '}
                                                     {t('reorderAssist.deliveredShort')} {(entry as any).deliveredQty ?? '-'} {entry.unit || item.unit || ''} {' | '}
                                                     {t('reorderAssist.remainingShort')} {(entry as any).restQty ?? '-'} {entry.unit || item.unit || ''}
                                                 </Text>
 
-                                                {matchedIncoming.length > 0 ? (
+                                                {matchedIncoming.length > 0 && showIncomingDetails ? (
                                                     matchedIncoming.map((delivery, deliveryIndex) => (
                                                         <Text
                                                             key={`matched-delivery-${item.article}-${index}-${deliveryIndex}`}
@@ -3784,44 +4004,11 @@ export default function ReorderScreen() {
                                                             {delivery.supplierName || delivery.supplierNumber || ''}
                                                         </Text>
                                                     ))
-                                                ) : purchaseOrderNo && rowIsLoadingIncoming ? (
-                                                    <View style={styles.historyLoadingRow}>
-                                                        <ActivityIndicator size="small" />
-                                                        <Text style={styles.metricMutedIndented}>
-                                                            {t('reorderAssist.loadingOrderAndDeliveryHistory')}
-                                                        </Text>
-                                                    </View>
-                                                ) : purchaseOrderNo && !rowHasRequestedIncoming ? (
-                                                    <TouchableOpacity
-                                                        style={styles.inlineLoadButton}
-                                                        onPress={() =>
-                                                            void fetchMatchingDeliveryForArticle(
-                                                                item.article,
-                                                                purchaseOrderNo,
-                                                                purchaseOrderDate
-                                                            )
-                                                        }
-                                                    >
-                                                        <Text style={styles.inlineLoadButtonText}>
-                                                            {t('columns.show')} {t('reorderAssist.matchingDelivery').toLowerCase()}
-                                                        </Text>
-                                                    </TouchableOpacity>
-                                                ) : purchaseOrderNo && rowIncomingDebug?.error ? (
-                                                    <TouchableOpacity
-                                                        style={styles.inlineLoadButton}
-                                                        onPress={() =>
-                                                            void fetchMatchingDeliveryForArticle(
-                                                                item.article,
-                                                                purchaseOrderNo,
-                                                                purchaseOrderDate
-                                                            )
-                                                        }
-                                                    >
-                                                        <Text style={styles.inlineLoadButtonText}>
-                                                            {t('common.retry')} {t('reorderAssist.matchingDelivery').toLowerCase()}
-                                                        </Text>
-                                                    </TouchableOpacity>
-                                                ) : purchaseOrderNo && rowHasRequestedIncoming ? (
+                                                ) : purchaseOrderNo &&
+                                                  matchedIncoming.length === 0 &&
+                                                  rowHasRequestedIncoming &&
+                                                  !rowIsLoadingIncoming &&
+                                                  !rowIncomingDebug?.error ? (
                                                     <Text style={styles.metricMutedIndented}>
                                                         {t('reorderAssist.noMatchingIncomingForOrder')}
                                                     </Text>
@@ -3923,6 +4110,7 @@ const styles = StyleSheet.create({
     filtersCompact: {
         marginTop: 10,
         marginBottom: 10,
+        marginHorizontal: Platform.OS === 'web' ? 8 : 10,
         padding: 10,
         borderWidth: 1,
         borderColor: '#ddd',
@@ -3934,11 +4122,44 @@ const styles = StyleSheet.create({
         gap: 8,
         marginBottom: 8,
     },
+    responsiveFieldsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 8,
+    },
     fieldHalf: {
         flex: 1,
     },
+    topFilterSingleFieldDesktop: {
+        flexGrow: 0,
+        flexShrink: 1,
+        flexBasis: 360,
+        minWidth: 280,
+        maxWidth: 420,
+    },
+    topFilterPairFieldDesktop: {
+        flexGrow: 0,
+        flexShrink: 1,
+        flexBasis: 180,
+        minWidth: 160,
+        maxWidth: 210,
+    },
     fieldThird: {
         flex: 1,
+    },
+    responsiveFieldExpanded: {
+        flexGrow: 0,
+        flexShrink: 1,
+        flexBasis: 170,
+        minWidth: 150,
+        maxWidth: 190,
+    },
+    responsiveFieldCompact: {
+        width: '48%',
+        flexGrow: 0,
+        flexShrink: 0,
+        minWidth: 0,
     },
     labelRow: {
         flexDirection: 'row',
@@ -3946,20 +4167,32 @@ const styles = StyleSheet.create({
         gap: 6,
         marginBottom: 4,
     },
+    labelRowCentered: {
+        justifyContent: 'center',
+    },
     label: {
         fontSize: 12,
         fontWeight: '600',
         marginBottom: 4,
     },
+    labelCentered: {
+        textAlign: 'center',
+    },
     labelInline: {
         fontSize: 12,
         fontWeight: '600',
+    },
+    labelInlineCentered: {
+        textAlign: 'center',
     },
     labelSmall: {
         fontSize: 11,
         fontWeight: '600',
         marginBottom: 4,
         color: '#555',
+    },
+    labelSmallCentered: {
+        textAlign: 'center',
     },
     inputCompact: {
         borderWidth: 1,
@@ -4113,6 +4346,18 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 120,
     },
+    bulkEditFieldExpanded: {
+        flex: 0,
+        flexBasis: 170,
+        minWidth: 150,
+        maxWidth: 190,
+    },
+    bulkEditFieldCompact: {
+        width: '48%',
+        flexGrow: 0,
+        flexShrink: 0,
+        minWidth: 0,
+    },
     bulkEditActions: {
         flexDirection: 'row',
         gap: 8,
@@ -4145,6 +4390,11 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         alignItems: 'center',
     },
+    buttonPrimaryDesktop: {
+        flex: 0,
+        minWidth: 180,
+        paddingHorizontal: 18,
+    },
     buttonSecondary: {
         paddingVertical: 10,
         paddingHorizontal: 12,
@@ -4165,13 +4415,27 @@ const styles = StyleSheet.create({
     summaryCompact: {
         flexDirection: 'row',
         flexWrap: 'wrap',
+        flex: 1,
+        minWidth: 220,
         gap: 10,
-        marginLeft: 8,
+    },
+    summarySelectionCard: {
+        marginHorizontal: Platform.OS === 'web' ? 8 : 10,
         marginBottom: 10,
+        padding: 10,
+        borderWidth: 1,
+        borderColor: '#ddd',
+        borderRadius: 8,
+        backgroundColor: '#fff',
+    },
+    summarySelectionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 12,
     },
     listFiltersSection: {
-        marginBottom: 10,
-        marginLeft: Platform.OS === 'web' ? 8 : 0,
+        marginBottom: 0,
     },
     listFilterGroup: {
         marginBottom: Platform.OS === 'web' ? 12 : 8,
@@ -4205,11 +4469,12 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#ddd',
         borderRadius: 8,
+        marginHorizontal: Platform.OS === 'web' ? 8 : 10,
         marginBottom: 8,
         backgroundColor: '#fff',
     },
     selectionColumnGuideRow: {
-        marginLeft: 10,
+        marginHorizontal: Platform.OS === 'web' ? 8 : 10,
         marginBottom: 8,
     },
     selectionColumnMaster: {
@@ -4370,6 +4635,9 @@ const styles = StyleSheet.create({
         color: '#333',
         marginBottom: 3,
     },
+    decisionLineInline: {
+        marginBottom: 0,
+    },
     decisionLineDanger: {
         color: '#b71c1c',
         fontWeight: '700',
@@ -4377,11 +4645,40 @@ const styles = StyleSheet.create({
     decisionStrong: {
         fontWeight: '700',
     },
+    decisionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginBottom: 4,
+    },
     metricsRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 10,
         marginBottom: 4,
+    },
+    settingsBox: {
+        marginTop: 8,
+        marginBottom: 8,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#e1e7ef',
+        borderRadius: 6,
+        backgroundColor: '#f8fafc',
+    },
+    inlineMetricActionButton: {
+        alignSelf: 'flex-start',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderWidth: 1,
+        borderColor: '#1976d2',
+        borderRadius: 6,
+        backgroundColor: '#fff',
+    },
+    inlineMetricActionText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#1976d2',
     },
     inlineEditorRow: {
         flexDirection: 'row',
@@ -4393,6 +4690,18 @@ const styles = StyleSheet.create({
     inlineEditorField: {
         flex: 1,
         minWidth: 120,
+    },
+    inlineEditorFieldExpanded: {
+        flex: 0,
+        flexBasis: 170,
+        minWidth: 150,
+        maxWidth: 190,
+    },
+    inlineEditorFieldCompact: {
+        width: '48%',
+        flexGrow: 0,
+        flexShrink: 0,
+        minWidth: 0,
     },
     inlineEditorActions: {
         flexDirection: 'row',
@@ -4416,6 +4725,30 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
         color: '#1976d2',
+    },
+    inlineLoadButtonInline: {
+        marginTop: 0,
+        marginLeft: 0,
+    },
+    historyInlineStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    historyInlineLinkRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 6,
+    },
+    historyInlineLinkButton: {
+        paddingVertical: 2,
+    },
+    historyInlineLinkText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#1976d2',
+        textDecorationLine: 'underline',
     },
     metric: {
         fontSize: 12,
@@ -4500,7 +4833,7 @@ const styles = StyleSheet.create({
     stepperRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        width: '100%',
     },
     stepperButton: {
         width: 34,
@@ -4511,6 +4844,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#fff',
+    },
+    stepperButtonLeading: {
+        marginRight: 6,
     },
     stepperButtonText: {
         fontSize: 18,
@@ -4640,6 +4976,19 @@ const styles = StyleSheet.create({
         marginTop: 4,
         marginBottom: 6,
     },
+    historyOrderRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 8,
+    },
+    historyOrderText: {
+        flexShrink: 1,
+    },
+    historyOrderDetailsText: {
+        marginTop: 4,
+        marginLeft: 12,
+    },
     stepperButtonMini: {
         width: 28,
         height: 30,
@@ -4655,6 +5004,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         fontSize: 12,
         textAlign: 'center',
+    },
+    stepperInputShared: {
+        flex: 1,
+        width: 0,
+        minWidth: 0,
+        marginRight: 6,
     },
 });
 

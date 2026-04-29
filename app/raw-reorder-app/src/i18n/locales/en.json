@@ -23,6 +23,7 @@
     "reorderAssist.bulkEditSelectAll": "Select all",
     "reorderAssist.bulkEditDeselectAll": "Deselect all",
     "reorderAssist.bulkEditSelectArticle": "Bulk update",
+    "reorderAssist.loadMatchingDelivery": "Ladda matchande leverans",
     "webshopArticle": "Webshop article",
     "orderingDecision": "Ordering decision",
     "estimatedOutOfStock": "Estimated out of stock",

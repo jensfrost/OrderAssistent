@@ -567,6 +567,7 @@
     "reorderAssist.rangeDays": "{{n}} dagar",
     "reorderAssist.emptyHintAtRisk": "Om listan är tom kan det bero på att filtret Visa bara artiklar i riskzonen är för strikt.",
     "reorderAssist.emptyList": "Kan göra listan tom",
+    "reorderAssist.loadMatchingDelivery": "Ladda matchande leverans",
     "columns.title": "Kolumner",
     "columns.help": "Välj vilka kolumner som kopieras/exporteras.",
     "columns.show": "Visa",
