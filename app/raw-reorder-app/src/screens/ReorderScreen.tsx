@@ -4551,6 +4551,7 @@ const styles = StyleSheet.create({
     helpIconButton: {
         width: 18,
         height: 18,
+        flexShrink: 0,
         borderRadius: 999,
         borderWidth: 1,
         borderColor: '#1976d2',
@@ -4915,6 +4916,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '700',
         color: '#333',
+        flexShrink: 1,
     },
     helpModalOverlay: {
         flex: 1,
