@@ -4618,11 +4618,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 6,
         marginBottom: 6,
+        flexWrap: 'nowrap', // viktigt
     },
     decisionTitle: {
         fontSize: 13,
         fontWeight: '700',
         color: '#111',
+        flexShrink: 1,   // ⭐ nyckeln
     },
     decisionText: {
         fontSize: 12,
