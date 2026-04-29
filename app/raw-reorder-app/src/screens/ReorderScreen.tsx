@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
@@ -208,7 +208,9 @@ function NumberStepperInput({
         <View style={styles.stepperRow}>
             <TouchableOpacity
                 style={[styles.stepperButton, compact && styles.stepperButtonMini]}
-                onPress={() => onChangeText(adjustNumericString(value, -1, minValue))}
+                onPress={() =>
+                    onChangeText(adjustNumericString(value, -1, minValue, placeholder))
+                }
             >
                 <Text style={styles.stepperButtonText}>-</Text>
             </TouchableOpacity>
@@ -226,7 +228,9 @@ function NumberStepperInput({
 
             <TouchableOpacity
                 style={[styles.stepperButton, compact && styles.stepperButtonMini]}
-                onPress={() => onChangeText(adjustNumericString(value, 1, minValue))}
+                onPress={() =>
+                    onChangeText(adjustNumericString(value, 1, minValue, placeholder))
+                }
             >
                 <Text style={styles.stepperButtonText}>+</Text>
             </TouchableOpacity>
@@ -421,9 +425,21 @@ function parseDateString(value: string) {
     return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function adjustNumericString(value: string, delta: number, minValue: number) {
-    const parsed = Number(value);
-    const base = Number.isFinite(parsed) ? parsed : minValue;
+function adjustNumericString(
+    value: string,
+    delta: number,
+    minValue: number,
+    fallbackValue?: string
+) {
+    const trimmedValue = String(value ?? '').trim();
+    const trimmedFallback = String(fallbackValue ?? '').trim();
+    const parsedValue = trimmedValue ? Number(trimmedValue) : Number.NaN;
+    const parsedFallback = trimmedFallback ? Number(trimmedFallback) : Number.NaN;
+    const base = Number.isFinite(parsedValue)
+        ? parsedValue
+        : Number.isFinite(parsedFallback)
+            ? parsedFallback
+            : minValue;
     return String(Math.max(minValue, base + delta));
 }
 
@@ -3623,12 +3639,14 @@ export default function ReorderScreen() {
                                         compact
                                     />
                                 </View>
+                            </View>
 
+                            <View style={styles.inlineEditorActions}>
                                 <TouchableOpacity
-                                    style={styles.resetButton}
+                                    style={styles.buttonSecondary}
                                     onPress={() => clearProductSettings(item.article)}
                                 >
-                                    <Text style={styles.resetButtonText}>{t('common.clear')}</Text>
+                                    <Text style={styles.buttonSecondaryText}>{t('common.clear')}</Text>
                                 </TouchableOpacity>
                             </View>
 
@@ -4367,7 +4385,6 @@ const styles = StyleSheet.create({
     },
     inlineEditorRow: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
         gap: 8,
         marginTop: 6,
         marginBottom: 6,
@@ -4375,20 +4392,14 @@ const styles = StyleSheet.create({
     },
     inlineEditorField: {
         flex: 1,
-        minWidth: 90,
+        minWidth: 120,
     },
-    resetButton: {
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        borderWidth: 1,
-        borderColor: '#bbb',
-        borderRadius: 6,
-        backgroundColor: '#fff',
-    },
-    resetButtonText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#444',
+    inlineEditorActions: {
+        flexDirection: 'row',
+        gap: 8,
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        marginBottom: 6,
     },
     inlineLoadButton: {
         alignSelf: 'flex-start',
@@ -4646,5 +4657,6 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
 });
+
 
 
